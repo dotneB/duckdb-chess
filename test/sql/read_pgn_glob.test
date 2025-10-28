@@ -1,0 +1,33 @@
+# name: test/sql/read_pgn_glob.test
+# description: Test glob pattern support in read_pgn
+# group: [read_pgn]
+
+# Load extension
+require duckdb_chess
+
+# Test glob pattern matching multiple files
+query III
+SELECT COUNT(*), MIN(Event), MAX(Event)
+FROM read_pgn('test/pgn_files/game*.pgn');
+----
+2	Test Game 1	Test Game 2
+
+# Test individual files match
+query I
+SELECT White FROM read_pgn('test/pgn_files/game1.pgn');
+----
+Alice
+
+query I
+SELECT White FROM read_pgn('test/pgn_files/game2.pgn');
+----
+Charlie
+
+# Test that glob combines all games
+query II
+SELECT White, Opening
+FROM read_pgn('test/pgn_files/game*.pgn')
+ORDER BY White;
+----
+Alice	French Defense
+Charlie	Sicilian Defense

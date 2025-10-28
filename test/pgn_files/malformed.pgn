@@ -1,0 +1,18 @@
+[Event "Valid Game"]
+[White "Player 1"]
+[Black "Player 2"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+
+[Event "Malformed - incomplete headers
+[White "Player 3"]
+
+1. d4
+
+[Event "Another Valid Game"]
+[White "Player 4"]
+[Black "Player 5"]
+[Result "0-1"]
+
+1. c4 c5 0-1

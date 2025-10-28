@@ -2,6 +2,13 @@
 build
 configure
 .idea
+
+# Agent Commands
+.opencode/command
+
+# Test artifacts
 duckdb_unittest_tempdir
 /test/bin
 venv
+*.duckdb
+*.csv

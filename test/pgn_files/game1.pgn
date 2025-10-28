@@ -1,0 +1,11 @@
+[Event "Test Game 1"]
+[Site "Online"]
+[White "Alice"]
+[Black "Bob"]
+[Result "1-0"]
+[WhiteElo "1800"]
+[BlackElo "1750"]
+[ECO "C00"]
+[Opening "French Defense"]
+
+1. e4 e6 2. d4 d5 3. Nc3 Nf6 1-0

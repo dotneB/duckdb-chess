@@ -1,0 +1,202 @@
+[Event "Casual Bullet Game"]
+[Site "https://lichess.org/abc12345"]
+[Date "2024.09.14"]
+[Round "?"]
+[White "PlayerA"]
+[Black "PlayerB"]
+[Result "1-0"]
+[WhiteElo "1850"]
+[BlackElo "1820"]
+[ECO "D30"]
+[Opening "Queen's Gambit Declined"]
+[TimeControl "60+0"]
+[Termination "Normal"]
+
+1. d4 { [%eval 0.25] [%clk 1:30:43] } Nf6 { [%eval 0.22] [%clk 1:30:42] }
+2. c4 { [%eval 0.18] [%clk 1:31:03] } e6 { [%eval 0.23] [%clk 1:30:54] }
+3. Nf3 { [%eval 0.12] [%clk 1:31:14] } d5 { [%eval 0.23] [%clk 1:30:51] }
+4. Nc3 { [%eval 0.14] [%clk 1:31:29] } Be7 { [%eval 0.17] [%clk 1:30:28] }
+5. g3 { [%eval -0.17] [%clk 1:29:45] } O-O { [%eval -0.07] [%clk 1:30:12] }
+6. Bg2 { [%eval 0.14] [%clk 1:29:50] } dxc4 { [%eval 0.12] [%clk 1:30:00] }
+7. O-O { [%eval 0.30] [%clk 1:29:31] } a6 { [%eval 0.24] [%clk 1:29:20] }
+1-0
+
+[Event "Rated Blitz Game"]
+[Site "https://lichess.org/xyz67890"]
+[Date "2024.09.15"]
+[Round "?"]
+[White "GrandMaster99"]
+[Black "ChessNinja"]
+[Result "0-1"]
+[WhiteElo "2100"]
+[BlackElo "2150"]
+[ECO "C41"]
+[Opening "Philidor Defense"]
+[TimeControl "180+2"]
+[Termination "Normal"]
+
+1. e4 { [%eval 0.20] [%clk 3:00:00] } e5 { [%eval 0.18] [%clk 3:00:00] }
+2. Nf3 { [%eval 0.22] [%clk 2:59:55] } d6 { [%eval 0.25] [%clk 2:59:58] }
+3. d4 { [%eval 0.15] [%clk 2:59:50] } exd4 { [%eval 0.12] [%clk 2:59:52] }
+4. Nxd4 { [%eval 0.20] [%clk 2:59:48] } Nf6 { [%eval 0.18] [%clk 2:59:50] }
+5. Nc3 { [%eval 0.15] [%clk 2:59:45] } Be7 { [%eval 0.20] [%clk 2:59:48] }
+0-1
+
+[Event "Classical Tournament"]
+[Site "https://lichess.org/def45678"]
+[Date "2024.09.16"]
+[Round "3"]
+[White "TacticalKing"]
+[Black "PositionalQueen"]
+[Result "1/2-1/2"]
+[WhiteElo "1950"]
+[BlackElo "1940"]
+[ECO "B50"]
+[Opening "Sicilian Defense"]
+[TimeControl "1800+30"]
+[Termination "Normal"]
+
+1. e4 { [%eval 0.25] [%clk 30:00:00] } c5 { [%eval 0.22] [%clk 30:00:00] }
+2. Nf3 { [%eval 0.20] [%clk 29:59:55] } d6 { [%eval 0.25] [%clk 29:59:58] }
+3. d4 { [%eval 0.18] [%clk 29:59:50] } cxd4 { [%eval 0.20] [%clk 29:59:55] }
+4. Nxd4 { [%eval 0.22] [%clk 29:59:48] } Nf6 { [%eval 0.18] [%clk 29:59:50] }
+1/2-1/2
+
+[Event "Rapid Arena"]
+[Site "https://lichess.org/ghi78901"]
+[Date "2024.09.17"]
+[Round "?"]
+[White "SpeedDemon"]
+[Black "TimeWizard"]
+[Result "1-0"]
+[WhiteElo "1750"]
+[BlackElo "1780"]
+[ECO "E60"]
+[Opening "King's Indian Defense"]
+[TimeControl "600+5"]
+[Termination "Time forfeit"]
+
+1. d4 { [%eval 0.28] [%clk 10:00:00] } Nf6 { [%eval 0.25] [%clk 10:00:00] }
+2. c4 { [%eval 0.20] [%clk 9:59:58] } g6 { [%eval 0.22] [%clk 9:59:58] }
+3. Nf3 { [%eval 0.18] [%clk 9:59:56] } Bg7 { [%eval 0.20] [%clk 9:59:56] }
+4. g3 { [%eval 0.15] [%clk 9:59:54] } O-O { [%eval 0.18] [%clk 9:59:54] }
+1-0
+
+[Event "Bullet Championship"]
+[Site "https://lichess.org/jkl23456"]
+[Date "2024.09.18"]
+[Round "1"]
+[White "BulletMaster"]
+[Black "QuickDraw"]
+[Result "0-1"]
+[WhiteElo "2050"]
+[BlackElo "2080"]
+[ECO "A00"]
+[Opening "Van't Kruijs Opening"]
+[TimeControl "60+0"]
+[Termination "Normal"]
+
+1. e3 { [%eval 0.05] [%clk 1:00:00] } e5 { [%eval 0.08] [%clk 1:00:00] }
+2. d4 { [%eval 0.10] [%clk 0:59:58] } exd4 { [%eval 0.12] [%clk 0:59:58] }
+3. exd4 { [%eval 0.08] [%clk 0:59:56] } d5 { [%eval 0.10] [%clk 0:59:56] }
+0-1
+
+[Event "Blitz Battle"]
+[Site "https://lichess.org/mno34567"]
+[Date "2024.09.19"]
+[Round "?"]
+[White "AttackForce"]
+[Black "DefenseWall"]
+[Result "1-0"]
+[WhiteElo "1900"]
+[BlackElo "1850"]
+[ECO "C50"]
+[Opening "Italian Game"]
+[TimeControl "300+3"]
+[Termination "Normal"]
+
+1. e4 { [%eval 0.30] [%clk 5:00:00] } e5 { [%eval 0.25] [%clk 5:00:00] }
+2. Nf3 { [%eval 0.28] [%clk 4:59:58] } Nc6 { [%eval 0.30] [%clk 4:59:58] }
+3. Bc4 { [%eval 0.25] [%clk 4:59:56] } Bc5 { [%eval 0.28] [%clk 4:59:56] }
+4. O-O { [%eval 0.22] [%clk 4:59:54] } Nf6 { [%eval 0.25] [%clk 4:59:54] }
+5. d3 { [%eval 0.20] [%clk 4:59:52] } d6 { [%eval 0.22] [%clk 4:59:52] }
+1-0
+
+[Event "Casual Rapid"]
+[Site "https://lichess.org/pqr45678"]
+[Date "2024.09.20"]
+[Round "?"]
+[White "RookRoller"]
+[Black "KnightRider"]
+[Result "1/2-1/2"]
+[WhiteElo "1650"]
+[BlackElo "1700"]
+[ECO "B10"]
+[Opening "Caro-Kann Defense"]
+[TimeControl "900+10"]
+[Termination "Normal"]
+
+1. e4 { [%eval 0.22] [%clk 15:00:00] } c6 { [%eval 0.20] [%clk 15:00:00] }
+2. d4 { [%eval 0.25] [%clk 14:59:58] } d5 { [%eval 0.22] [%clk 14:59:58] }
+3. Nc3 { [%eval 0.18] [%clk 14:59:56] } dxe4 { [%eval 0.20] [%clk 14:59:56] }
+4. Nxe4 { [%eval 0.22] [%clk 14:59:54] } Bf5 { [%eval 0.18] [%clk 14:59:54] }
+1/2-1/2
+
+[Event "Titled Tuesday"]
+[Site "https://lichess.org/stu56789"]
+[Date "2024.09.21"]
+[Round "5"]
+[White "IMPlayer"]
+[Black "GMHopeful"]
+[Result "0-1"]
+[WhiteElo "2200"]
+[BlackElo "2350"]
+[ECO "A45"]
+[Opening "Indian Defense"]
+[TimeControl "180+2"]
+[Termination "Normal"]
+
+1. d4 { [%eval 0.20] [%clk 3:00:00] } Nf6 { [%eval 0.18] [%clk 3:00:00] }
+2. Bf4 { [%eval 0.15] [%clk 2:59:58] } e6 { [%eval 0.18] [%clk 2:59:58] }
+3. e3 { [%eval 0.12] [%clk 2:59:56] } c5 { [%eval 0.15] [%clk 2:59:56] }
+4. c3 { [%eval 0.10] [%clk 2:59:54] } Nc6 { [%eval 0.12] [%clk 2:59:54] }
+0-1
+
+[Event "Hyperbullet Madness"]
+[Site "https://lichess.org/vwx67890"]
+[Date "2024.09.22"]
+[Round "?"]
+[White "LightningFast"]
+[Black "ThunderQuick"]
+[Result "1-0"]
+[WhiteElo "1800"]
+[BlackElo "1825"]
+[ECO "C00"]
+[Opening "French Defense"]
+[TimeControl "30+0"]
+[Termination "Time forfeit"]
+
+1. e4 { [%eval 0.25] [%clk 0:30:00] } e6 { [%eval 0.22] [%clk 0:30:00] }
+2. d4 { [%eval 0.28] [%clk 0:29:58] } d5 { [%eval 0.25] [%clk 0:29:58] }
+3. Nc3 { [%eval 0.20] [%clk 0:29:56] } Nf6 { [%eval 0.22] [%clk 0:29:56] }
+1-0
+
+[Event "Swiss Tournament"]
+[Site "https://lichess.org/yza78901"]
+[Date "2024.09.23"]
+[Round "7"]
+[White "SolidPlayer"]
+[Black "CreativeGenius"]
+[Result "1/2-1/2"]
+[WhiteElo "2000"]
+[BlackElo "1980"]
+[ECO "D02"]
+[Opening "Queen's Pawn Game"]
+[TimeControl "600+0"]
+[Termination "Normal"]
+
+1. d4 { [%eval 0.28] [%clk 10:00:00] } d5 { [%eval 0.25] [%clk 10:00:00] }
+2. Nf3 { [%eval 0.22] [%clk 9:59:58] } Nf6 { [%eval 0.25] [%clk 9:59:58] }
+3. c4 { [%eval 0.20] [%clk 9:59:56] } e6 { [%eval 0.22] [%clk 9:59:56] }
+4. g3 { [%eval 0.18] [%clk 9:59:54] } Be7 { [%eval 0.20] [%clk 9:59:54] }
+1/2-1/2

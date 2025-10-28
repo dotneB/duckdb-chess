@@ -1,0 +1,39 @@
+# name: test/sql/read_pgn_errors.test
+# description: Test error handling and edge cases in read_pgn (Spec: pgn-parsing - Malformed Game Handling)
+# group: [read_pgn]
+
+require duckdb_chess
+
+# Test empty PGN file (Spec: pgn-parsing - Empty result for non-existent files)
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/empty.pgn');
+----
+0
+
+# Test malformed PGN file with mixed valid and invalid games
+# (Spec: pgn-parsing - Multiple games with mixed validity)
+# The parser now captures malformed games with error information instead of skipping them
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/malformed.pgn');
+----
+3
+
+# Test that all games are returned including malformed ones with parse_error
+query IIII
+SELECT Event, White, Result, parse_error FROM read_pgn('test/pgn_files/malformed.pgn') ORDER BY White;
+----
+Valid Game	Player 1	1-0	NULL
+Malformed - incomplete headers	Player 3	NULL	NULL
+Another Valid Game	Player 4	0-1	NULL
+
+# Test non-existent file returns an error
+statement error
+SELECT * FROM read_pgn('test/pgn_files/does_not_exist.pgn');
+----
+Failed to open file
+
+# Test glob pattern that matches no files
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/nomatch*.pgn');
+----
+0

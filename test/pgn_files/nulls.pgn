@@ -1,0 +1,36 @@
+[Event "Test with all headers"]
+[Site "https://example.com"]
+[Date "2024.01.01"]
+[Round "1"]
+[White "Player A"]
+[Black "Player B"]
+[Result "1-0"]
+[WhiteElo "2000"]
+[BlackElo "1900"]
+[WhiteTitle "GM"]
+[BlackTitle "IM"]
+[ECO "B00"]
+[Opening "Test Opening"]
+[UTCDate "2024.01.01"]
+[UTCTime "12:00:00"]
+[TimeControl "180+0"]
+[Termination "Normal"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+
+[Event "Minimal game"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+
+1. d4 d5 *
+
+[Event "Game with some missing fields"]
+[White "White Player"]
+[Black "Black Player"]
+[Result "1/2-1/2"]
+
+1. e4 e5 1/2-1/2

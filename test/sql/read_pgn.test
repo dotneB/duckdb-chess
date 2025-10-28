@@ -1,0 +1,43 @@
+# name: test/sql/read_pgn.test
+# description: Test read_pgn table function with Lichess schema
+# group: [chess]
+
+require duckdb_chess
+
+# Test schema matches extended Lichess (16 columns + 1 diagnostic column)
+query IIIIII
+DESCRIBE SELECT * FROM read_pgn('test/sample.pgn') LIMIT 1;
+----
+Event	VARCHAR	YES	NULL	NULL	NULL
+Site	VARCHAR	YES	NULL	NULL	NULL
+White	VARCHAR	YES	NULL	NULL	NULL
+Black	VARCHAR	YES	NULL	NULL	NULL
+Result	VARCHAR	YES	NULL	NULL	NULL
+WhiteTitle	VARCHAR	YES	NULL	NULL	NULL
+BlackTitle	VARCHAR	YES	NULL	NULL	NULL
+WhiteElo	VARCHAR	YES	NULL	NULL	NULL
+BlackElo	VARCHAR	YES	NULL	NULL	NULL
+UTCDate	VARCHAR	YES	NULL	NULL	NULL
+UTCTime	VARCHAR	YES	NULL	NULL	NULL
+ECO	VARCHAR	YES	NULL	NULL	NULL
+Opening	VARCHAR	YES	NULL	NULL	NULL
+Termination	VARCHAR	YES	NULL	NULL	NULL
+TimeControl	VARCHAR	YES	NULL	NULL	NULL
+movetext	VARCHAR	YES	NULL	NULL	NULL
+
+# Test counting games
+query I
+SELECT COUNT(*) FROM read_pgn('test/sample.pgn');
+----
+10
+
+# Test filtering by opening
+query II
+SELECT White, Opening FROM read_pgn('test/sample.pgn') WHERE Opening LIKE '%Defense%' ORDER BY White;
+----
+GrandMaster99	Philidor Defense
+IMPlayer	Indian Defense
+LightningFast	French Defense
+RookRoller	Caro-Kann Defense
+SpeedDemon	King's Indian Defense
+TacticalKing	Sicilian Defense

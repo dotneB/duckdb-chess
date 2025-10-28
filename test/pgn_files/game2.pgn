@@ -1,0 +1,11 @@
+[Event "Test Game 2"]
+[Site "Online"]
+[White "Charlie"]
+[Black "Diana"]
+[Result "0-1"]
+[WhiteElo "1700"]
+[BlackElo "1850"]
+[ECO "B20"]
+[Opening "Sicilian Defense"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 0-1

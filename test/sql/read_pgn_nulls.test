@@ -1,0 +1,76 @@
+# name: test/sql/read_pgn_nulls.test
+# description: Test NULL value handling in read_pgn (Spec: data-schema - NULL Value Handling)
+# group: [read_pgn]
+
+require duckdb_chess
+
+# Test that missing headers result in NULL values, not empty strings
+query IIIIIIIIIIIIIIII
+SELECT 
+    Event,
+    Site,
+    White,
+    Black,
+    Result,
+    WhiteTitle,
+    BlackTitle,
+    WhiteElo,
+    BlackElo,
+    UTCDate,
+    UTCTime,
+    ECO,
+    Opening,
+    Termination,
+    TimeControl,
+    movetext
+FROM read_pgn('test/pgn_files/nulls.pgn')
+ORDER BY Event;
+----
+Game with some missing fields	NULL	White Player	Black Player	1/2-1/2	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	1. e4 e5
+Minimal game	?	?	?	*	NULL	NULL	NULL	NULL	????.??.??	NULL	NULL	NULL	NULL	NULL	1. d4 d5
+Test with all headers	https://example.com	Player A	Player B	1-0	GM	IM	2000	1900	2024.01.01	12:00:00	B00	Test Opening	Normal	180+0	1. e4 e5 2. Nf3 Nc6
+
+# Test NULL detection for specific fields
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/nulls.pgn') WHERE WhiteTitle IS NULL;
+----
+2
+
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/nulls.pgn') WHERE ECO IS NULL;
+----
+2
+
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/nulls.pgn') WHERE Opening IS NULL;
+----
+2
+
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/nulls.pgn') WHERE Termination IS NULL;
+----
+2
+
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/nulls.pgn') WHERE TimeControl IS NULL;
+----
+2
+
+# Test that movetext is never NULL (always present, even if empty)
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/nulls.pgn') WHERE movetext IS NULL;
+----
+0
+
+# Test COALESCE with NULL values
+query III
+SELECT 
+    Event,
+    COALESCE(WhiteTitle, 'No Title') as white_title,
+    COALESCE(Opening, 'Unknown Opening') as opening
+FROM read_pgn('test/pgn_files/nulls.pgn')
+ORDER BY Event;
+----
+Game with some missing fields	No Title	Unknown Opening
+Minimal game	No Title	Unknown Opening
+Test with all headers	GM	Test Opening
