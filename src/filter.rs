@@ -1,9 +1,11 @@
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
-    vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
+    vscalar::{ScalarFunctionSignature, VScalar},
+    vtab::arrow::WritableVector,
 };
+use libduckdb_sys::duckdb_string_t;
 use std::ffi::CString;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::error::Error;
 
 /// Spec: annotation-filtering - Movetext Annotation Removal
 /// Removes curly brace annotations from chess movetext while preserving move structure
@@ -46,61 +48,50 @@ pub fn filter_movetext_annotations(movetext: &str) -> String {
     result.trim().to_string()
 }
 
-#[repr(C)]
-pub struct FilterMovetextBindData {
-    movetext: String,
-}
+pub struct FilterMovetextScalar;
 
-#[repr(C)]
-pub struct FilterMovetextInitData {
-    done: AtomicBool,
-}
+impl VScalar for FilterMovetextScalar {
+    type State = ();
 
-pub struct FilterMovetextVTab;
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let len = input.len();
+        let input_vec = input.flat_vector(0);
+        let output_vec = output.flat_vector();
 
-impl VTab for FilterMovetextVTab {
-    type InitData = FilterMovetextInitData;
-    type BindData = FilterMovetextBindData;
+        // Get raw slice of duckdb_string_t
+        let input_slice = input_vec.as_slice::<duckdb_string_t>();
 
-    fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
-        let movetext = bind.get_parameter(0).to_string();
-
-        bind.add_result_column(
-            "filtered_movetext",
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        );
-
-        Ok(FilterMovetextBindData { movetext })
-    }
-
-    fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
-        Ok(FilterMovetextInitData {
-            done: AtomicBool::new(false),
-        })
-    }
-
-    fn func(
-        func: &TableFunctionInfo<Self>,
-        output: &mut DataChunkHandle,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let init_data = func.get_init_data();
-        let bind_data = func.get_bind_data();
-
-        if init_data.done.swap(true, Ordering::Relaxed) {
-            output.set_len(0);
-            return Ok(());
+        for i in 0..len {
+            let val = read_duckdb_string(input_slice[i]);
+            let filtered = filter_movetext_annotations(&val);
+            output_vec.insert(i, CString::new(filtered)?);
         }
-
-        let filtered = filter_movetext_annotations(&bind_data.movetext);
-        let result_vec = output.flat_vector(0);
-        result_vec.insert(0, CString::new(filtered)?);
-        output.set_len(1);
-
         Ok(())
     }
 
-    fn parameters() -> Option<Vec<LogicalTypeHandle>> {
-        Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        )]
+    }
+}
+
+unsafe fn read_duckdb_string(s: duckdb_string_t) -> String {
+    if s.value.inlined.length <= 12 {
+        let len = s.value.inlined.length as usize;
+        let slice = &s.value.inlined.inlined;
+        let slice_u8 = std::slice::from_raw_parts(slice.as_ptr() as *const u8, len);
+        String::from_utf8_lossy(slice_u8).into_owned()
+    } else {
+        let len = s.value.pointer.length as usize;
+        let ptr = s.value.pointer.ptr;
+        let slice = std::slice::from_raw_parts(ptr as *const u8, len);
+        String::from_utf8_lossy(slice).into_owned()
     }
 }
 

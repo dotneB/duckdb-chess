@@ -2,23 +2,17 @@
 
 ## Purpose
 To provide mechanisms for cleaning and normalizing chess game text, specifically removing annotations (comments) to facilitate analysis of raw move sequences.
-
 ## Requirements
-
 ### Requirement: Movetext Annotation Removal
-The system SHALL provide a `filter_movetext_annotations(movetext)` table function that removes curly brace annotations from chess movetext while preserving the move structure.
+The system SHALL provide a `filter_movetext_annotations(movetext)` **scalar** function that removes curly brace annotations from chess movetext while preserving the move structure.
 
-#### Scenario: Remove single annotation
-- **WHEN** user calls `filter_movetext_annotations('1. e4 { comment } e5')`
-- **THEN** the function returns `'1. e4 e5'` with the annotation removed
+#### Scenario: Scalar usage in projection
+- **WHEN** user calls `SELECT filter_movetext_annotations(movetext) FROM table`
+- **THEN** the function returns the filtered movetext for each row
 
-#### Scenario: Remove multiple annotations
-- **WHEN** movetext contains multiple annotations like `'1. e4 { first } e5 { second } 2. Nf3 { third }'`
-- **THEN** the function removes all annotations and returns `'1. e4 e5 2. Nf3'`
-
-#### Scenario: Preserve movetext without annotations
-- **WHEN** movetext contains no annotations like `'1. e4 e5 2. Nf3 Nc6'`
-- **THEN** the function returns the movetext unchanged
+#### Scenario: Empty input handling
+- **WHEN** the function receives an empty string
+- **THEN** it returns an empty string
 
 ### Requirement: Nested Annotation Handling
 The system SHALL correctly handle nested curly braces within annotations.
@@ -53,13 +47,3 @@ The system SHALL preserve chess move numbering and notation exactly as provided 
 - **WHEN** movetext uses Standard Algebraic Notation (SAN)
 - **THEN** all move symbols (pieces, squares, check/checkmate indicators) remain unchanged
 
-### Requirement: Single Row Output
-The system SHALL return exactly one row containing the filtered movetext string.
-
-#### Scenario: Table function result
-- **WHEN** the function is called with any valid movetext
-- **THEN** it returns a single-row, single-column result with the filtered text
-
-#### Scenario: Empty input handling
-- **WHEN** the function receives an empty string
-- **THEN** it returns a single row with an empty filtered result
