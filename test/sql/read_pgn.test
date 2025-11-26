@@ -6,7 +6,7 @@ require duckdb_chess
 
 # Test schema matches extended Lichess (16 columns + 1 diagnostic column)
 query IIIIII
-DESCRIBE SELECT * FROM read_pgn('test/sample.pgn') LIMIT 1;
+DESCRIBE SELECT * FROM read_pgn('test/pgn_files/sample.pgn') LIMIT 1;
 ----
 Event	VARCHAR	YES	NULL	NULL	NULL
 Site	VARCHAR	YES	NULL	NULL	NULL
@@ -28,13 +28,13 @@ parse_error	VARCHAR	YES	NULL	NULL	NULL
 
 # Test counting games
 query I
-SELECT COUNT(*) FROM read_pgn('test/sample.pgn');
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/sample.pgn');
 ----
 10
 
 # Test filtering by opening
 query II
-SELECT White, Opening FROM read_pgn('test/sample.pgn') WHERE Opening LIKE '%Defense%' ORDER BY White;
+SELECT White, Opening FROM read_pgn('test/pgn_files/sample.pgn') WHERE Opening LIKE '%Defense%' ORDER BY White;
 ----
 GrandMaster99	Philidor Defense
 IMPlayer	Indian Defense

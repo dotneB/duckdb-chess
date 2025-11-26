@@ -57,14 +57,17 @@ Key features:
   - Row count verification
   - Query correctness (filtering, ordering, projections)
   - Glob pattern support
-- Run tests with `make test_debug` (debug build) or `make test_release` (release build)
-- Use sample PGN files in `test/pgn_files/` and `test/sample.pgn`
+- **Unit Testing**: Run `cargo test` to verify core logic in `src/filter.rs` and `src/visitor.rs`.
+- **Integration Testing**:
+  - Run `make debug` or `make release` **BEFORE** running tests to ensure the extension binary is up-to-date.
+  - Run `make test_debug` (debug build) or `make test_release` (release build).
+- Use sample PGN files in `test/pgn_files/`.
 - Version testing: Change `DUCKDB_TEST_VERSION` environment variable to test against different DuckDB versions
 
 ### Git Workflow
 - Use descriptive commit messages that explain "why" not just "what"
 - Branch naming: feature/, bugfix/, refactor/, docs/
-- Test locally before pushing (`make test_debug`)
+- Test locally before pushing (`cargo test` && `make debug` && `make test_debug`)
 - CI/CD pipeline runs on push via GitHub Actions
 - Extension must build for multiple platforms (Linux amd64/arm64, Windows, macOS)
 

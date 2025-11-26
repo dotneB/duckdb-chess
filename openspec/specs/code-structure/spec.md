@@ -42,3 +42,22 @@ Given the `extension_entrypoint` function
 It must remain in `src/lib.rs`
 And `src/lib.rs` must declare the sub-modules
 
+### Requirement: Unit Test Support
+The project MUST support unit testing for core logic modules to ensure reliability and facilitate refactoring.
+
+#### Scenario: Filter Logic Testing
+- **WHEN** `cargo test` is run
+- **THEN** `filter_movetext_annotations` logic is verified against a suite of test cases (nested braces, whitespace) without requiring a database connection
+
+#### Scenario: Visitor Logic Testing
+- **WHEN** `cargo test` is run
+- **THEN** `GameVisitor` parsing logic is verified against mock PGN fragments without requiring file I/O
+
+### Requirement: Test Data Organization
+All PGN test data files MUST be located within the `test/pgn_files/` directory to maintain a clean structure.
+
+#### Scenario: Data Location
+- **WHEN** a new test PGN file is added
+- **THEN** it must be placed in `test/pgn_files/`
+- **AND** `test/` root must not contain loose `.pgn` files
+

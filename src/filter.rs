@@ -103,3 +103,49 @@ impl VTab for FilterMovetextVTab {
         Some(vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_simple_annotation() {
+        let input = "1. e4 { comment } e5";
+        assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
+    }
+
+    #[test]
+    fn test_filter_multiple_annotations() {
+        let input = "1. e4 { first } e5 { second } 2. Nf3 { third }";
+        assert_eq!(filter_movetext_annotations(input), "1. e4 e5 2. Nf3");
+    }
+
+    #[test]
+    fn test_filter_no_annotations() {
+        let input = "1. e4 e5 2. Nf3 Nc6";
+        assert_eq!(filter_movetext_annotations(input), "1. e4 e5 2. Nf3 Nc6");
+    }
+
+    #[test]
+    fn test_filter_nested_annotations() {
+        let input = "1. e4 { outer { inner } text } e5";
+        assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
+    }
+
+    #[test]
+    fn test_filter_whitespace_normalization() {
+        let input = "1. e4   { comment }   e5";
+        assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
+    }
+
+    #[test]
+    fn test_filter_empty_string() {
+        assert_eq!(filter_movetext_annotations(""), "");
+    }
+
+    #[test]
+    fn test_filter_leading_trailing_whitespace() {
+        let input = "  1. e4 e5  ";
+        assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
+    }
+}

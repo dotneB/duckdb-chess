@@ -6,10 +6,10 @@ INSTALL 'target/release/duckdb_chess.dll' FROM local_file;
 LOAD duckdb_chess;
 
 -- Test read_pgn function
-SELECT * FROM read_pgn('test/sample.pgn');
+SELECT * FROM read_pgn('test/pgn_files/sample.pgn');
 
 -- Count games
-SELECT COUNT(*) as num_games FROM read_pgn('test/sample.pgn');
+SELECT COUNT(*) as num_games FROM read_pgn('test/pgn_files/sample.pgn');
 
 -- Show columns
 SELECT
@@ -18,4 +18,4 @@ SELECT
     result,
     opening_name,
     LENGTH(movetext) as movetext_len
-FROM read_pgn('test/sample.pgn');
+FROM read_pgn('test/pgn_files/sample.pgn');

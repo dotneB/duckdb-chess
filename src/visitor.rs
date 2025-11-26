@@ -171,3 +171,73 @@ impl Visitor for GameVisitor {
         self.finalize_game();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pgn_reader::Reader;
+
+    #[test]
+    fn test_visitor_basic_parsing() {
+        let pgn = r#"[Event "Test Game"]
+[Site "Internet"]
+[Result "1-0"]
+1. e4 e5 2. Nf3 1-0"#;
+
+        let mut reader = Reader::new(pgn.as_bytes());
+        let mut visitor = GameVisitor::new();
+
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.expect("Should have parsed a game");
+        assert_eq!(game.event.as_deref(), Some("Test Game"));
+        assert_eq!(game.site.as_deref(), Some("Internet"));
+        assert_eq!(game.result.as_deref(), Some("1-0"));
+        assert_eq!(game.movetext, "1. e4 e5 2. Nf3");
+    }
+
+    #[test]
+    fn test_visitor_with_comments() {
+        let pgn = r#"[Event "Comment Test"]
+1. e4 { best by test } e5 1-0"#;
+
+        let mut reader = Reader::new(pgn.as_bytes());
+        let mut visitor = GameVisitor::new();
+
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.expect("Should have parsed a game");
+        assert_eq!(game.movetext, "1. e4 { best by test } e5");
+    }
+
+    #[test]
+    fn test_visitor_empty_movetext() {
+        let pgn = r#"[Event "Empty"]
+[Result "*"]
+*"#;
+        let mut reader = Reader::new(pgn.as_bytes());
+        let mut visitor = GameVisitor::new();
+
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.expect("Should have parsed a game");
+        assert_eq!(game.movetext, "");
+        assert_eq!(game.result.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_visitor_numeric_fields() {
+        let pgn = r#"[WhiteElo "2500"]
+[BlackElo "2400"]
+1. e4 1-0"#;
+
+        let mut reader = Reader::new(pgn.as_bytes());
+        let mut visitor = GameVisitor::new();
+
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.expect("Should have parsed a game");
+        assert_eq!(game.white_elo, Some(2500));
+        assert_eq!(game.black_elo, Some(2400));
+    }
+}
