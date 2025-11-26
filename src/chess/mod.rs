@@ -1,4 +1,5 @@
 mod filter;
+mod moves;
 mod reader;
 mod types;
 mod visitor;
@@ -7,6 +8,7 @@ use duckdb::{Connection, Result};
 use duckdb_loadable_macros::duckdb_entrypoint_c_api;
 use filter::FilterMovetextScalar;
 use libduckdb_sys as ffi;
+use moves::MovesJsonScalar;
 use reader::ReadPgnVTab;
 use std::error::Error;
 
@@ -16,5 +18,6 @@ const EXTENSION_NAME: &str = "read_pgn";
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     con.register_table_function::<ReadPgnVTab>(EXTENSION_NAME)?;
     con.register_scalar_function::<FilterMovetextScalar>("filter_movetext_annotations")?;
+    con.register_scalar_function::<MovesJsonScalar>("moves_json")?;
     Ok(())
 }

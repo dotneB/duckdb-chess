@@ -1,0 +1,17 @@
+## 1. Implementation
+- [x] 1.1 Create `src/chess/moves.rs`
+    - Define `MovesJsonScalar` struct implementing `VScalar`
+    - Implement `process_moves` helper using `shakmaty`
+    - Logic:
+        - Filter annotations (reuse `filter_movetext_annotations` logic or call it)
+        - Iterate tokens
+        - Parse SAN -> `shakmaty::Move`
+        - Play move on `shakmaty::Position`
+        - Generate FEN
+        - Accumulate into JSON String
+- [x] 1.2 Register function in `src/chess/mod.rs` as `moves_json`
+- [x] 1.3 Add tests in `test/sql/moves_json.test`
+    - Test basic explode
+    - Test usage with `UNNEST` and `::JSON` cast
+    - Test invalid moves
+    - Test empty strings

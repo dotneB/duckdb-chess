@@ -1,0 +1,48 @@
+# name: test/sql/moves_json.test
+# description: Test moves_json scalar function
+# group: [moves_json]
+
+require duckdb_chess
+
+# Test basic moves
+query I
+SELECT moves_json('1. e4 e5');
+----
+[{"ply":1,"move":"e4","fen":"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"},{"ply":2,"move":"e5","fen":"rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"}]
+
+# Test unnesting
+query III
+SELECT 
+    m.ply,
+    m.move,
+    m.fen 
+FROM (
+    SELECT UNNEST(moves_json('1. e4 e5')::STRUCT(ply INTEGER, move VARCHAR, fen VARCHAR)[]) as m
+);
+----
+1	e4	rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1
+2	e5	rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2
+
+# Test filtering annotations
+query I
+SELECT moves_json('1. e4 {comment} e5 {another comment}') = moves_json('1. e4 e5');
+----
+true
+
+# Test empty
+query I
+SELECT moves_json('');
+----
+[]
+
+# Test result marker ignored
+query I
+SELECT moves_json('1. e4 e5 1-0') = moves_json('1. e4 e5');
+----
+true
+
+# Test invalid move - should return valid prefix
+query I
+SELECT moves_json('1. e4 e5 INVALID');
+----
+[{"ply":1,"move":"e4","fen":"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"},{"ply":2,"move":"e5","fen":"rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"}]
