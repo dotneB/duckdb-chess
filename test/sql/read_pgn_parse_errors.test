@@ -1,0 +1,31 @@
+# name: test/sql/read_pgn_parse_errors.test
+# description: Test parse_error column for game diagnostics (Spec: data-schema - Parse Error Column)
+# group: [read_pgn]
+
+require duckdb_chess
+
+# Test that parse_error column exists
+query IIIIII
+DESCRIBE SELECT parse_error FROM read_pgn('test/pgn_files/parse_errors.pgn') LIMIT 1;
+----
+parse_error	VARCHAR	YES	NULL	NULL	NULL
+
+# Test that all games are returned
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/parse_errors.pgn');
+----
+2
+
+# Test successful games have NULL parse_error (Spec: data-schema - Successful game parsing)
+query II
+SELECT White, parse_error FROM read_pgn('test/pgn_files/parse_errors.pgn') 
+WHERE parse_error IS NULL 
+ORDER BY White;
+----
+Alice	NULL
+No one	NULL
+
+# Note: We do not test 'parse_error IS NOT NULL' here because the pgn-reader library 
+# is extremely robust and recovers from almost all malformed inputs (returning partial data 
+# with no error), making it difficult to generate a synthetic parse error in tests.
+# The mechanism is implemented, but effectively unused for common malformed PGNs.

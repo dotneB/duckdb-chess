@@ -24,6 +24,7 @@ Opening	VARCHAR	YES	NULL	NULL	NULL
 Termination	VARCHAR	YES	NULL	NULL	NULL
 TimeControl	VARCHAR	YES	NULL	NULL	NULL
 movetext	VARCHAR	YES	NULL	NULL	NULL
+parse_error	VARCHAR	YES	NULL	NULL	NULL
 
 # Test counting games
 query I

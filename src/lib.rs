@@ -52,7 +52,9 @@ pub struct GameRecord {
     pub movetext: String,
 
     // Parse diagnostics
+    /// Spec: data-schema - Parse Error Column
     /// Contains NULL for successfully parsed games or error message for failed games
+    pub parse_error: Option<String>,
 }
 
 /// Visitor implementation for pgn-reader
@@ -103,10 +105,69 @@ impl GameVisitor {
             termination: self.get_header("Termination"),
             time_control: self.get_header("TimeControl"),
             movetext: self.movetext_buffer.trim().to_string(),
+            parse_error: None,
         });
     }
 
+    /// Spec: pgn-parsing - Error Message Capture
     /// Creates a partial GameRecord with available headers and a parse error message
+    fn finalize_game_with_error(&mut self, error_msg: String) {
+        let parse_elo = |s: &str| s.parse::<i32>().ok();
+
+        self.current_game = Some(GameRecord {
+            event: self.get_header("Event"),
+            site: self.get_header("Site"),
+            white: self.get_header("White"),
+            black: self.get_header("Black"),
+            result: self.get_header("Result"),
+            white_title: self.get_header("WhiteTitle"),
+            black_title: self.get_header("BlackTitle"),
+            white_elo: self.get_header("WhiteElo").and_then(|s| parse_elo(&s)),
+            black_elo: self.get_header("BlackElo").and_then(|s| parse_elo(&s)),
+            utc_date: self.get_header("UTCDate").or_else(|| self.get_header("Date")),
+            utc_time: self.get_header("UTCTime").or_else(|| self.get_header("Time")),
+            eco: self.get_header("ECO"),
+            opening: self.get_header("Opening"),
+            termination: self.get_header("Termination"),
+            time_control: self.get_header("TimeControl"),
+            movetext: self.movetext_buffer.trim().to_string(),
+            parse_error: Some(error_msg),
+        });
+    }
+}
+
+impl Visitor for GameVisitor {
+    type Tags = ();
+    type Movetext = String;
+    type Output = ();
+
+    fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
+        self.headers.clear();
+        self.movetext_buffer.clear();
+        self.move_count = 0;
+        self.current_game = None;
+        ControlFlow::Continue(())
+    }
+
+    fn tag(&mut self, _: &mut Self::Tags, key: &[u8], value: RawTag<'_>) -> ControlFlow<Self::Output> {
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let value_str = String::from_utf8_lossy(value.as_bytes()).to_string();
+        self.headers.push((key_str, value_str));
+        ControlFlow::Continue(())
+    }
+
+    fn begin_movetext(&mut self, _: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        ControlFlow::Continue(String::new())
+    }
+
+    fn begin_variation(&mut self, _: &mut Self::Movetext) -> ControlFlow<Self::Output, Skip> {
+        ControlFlow::Continue(Skip(true))
+    }
+
+    fn san(&mut self, movetext: &mut Self::Movetext, san: SanPlus) -> ControlFlow<Self::Output> {
+        if self.move_count > 0 {
+            movetext.push(' ');
+        }
         if self.move_count % 2 == 0 {
             // White's move
             movetext.push_str(&format!("{}. ", (self.move_count / 2) + 1));
@@ -180,7 +241,9 @@ impl VTab for ReadPgnVTab {
         bind.add_result_column("TimeControl", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("movetext", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         
+        // Spec: data-schema - Parse Error Column
         // 17th column: diagnostic information about parsing failures (VARCHAR, nullable)
+        bind.add_result_column("parse_error", LogicalTypeHandle::from(LogicalTypeId::Varchar));
 
         Ok(ReadPgnBindData { paths })
     }
@@ -221,47 +284,31 @@ impl VTab for ReadPgnVTab {
                 for line_result in reader.lines() {
                     let line = match line_result {
                         Ok(l) => l,
-                        Err(e) => {
-                            eprintln!("WARNING: Error reading line in file '{}': {} (skipped)", path.display(), e);
-                            continue;
-                        }
+                        Err(e) => { eprintln!("WARNING: Error reading line in file '{}': {} (skipped)", path.display(), e); continue; }
                     };
-
-                    // Check if we're starting a new game (starts with [Event header)
                     if line.starts_with("[Event ") {
-                        // If we have accumulated a previous game, try to parse it
                         if in_game && !current_game_text.is_empty() {
                             game_number += 1;
-                            // Try to parse the accumulated game
                             let game_bytes = current_game_text.as_bytes();
                             let mut game_reader = Reader::new(game_bytes);
                             match game_reader.read_game(&mut visitor) {
-                                Ok(Some(_)) => {
-                                    if let Some(game) = visitor.current_game.take() {
-                                        games.push(game);
-                                    }
-                                }
+                                Ok(Some(_)) => { if let Some(game) = visitor.current_game.take() { games.push(game); } }
                                 Ok(None) => {}
-                                Err(e) => {
-                                    // Spec: pgn-parsing - Malformed Game Handling
-                                    eprintln!("WARNING: Error parsing game #{} in file '{}': {}", 
-                                                game_number, path.display(), e);
-                                }
+                                Err(e) => { let error_msg = format!("Error parsing game #{} in file '{}': {}", game_number, path.display(), e);
+                                            eprintln!("WARNING: {} (captured with partial data)", error_msg);
+                                            visitor.finalize_game_with_error(error_msg);
+                                            if let Some(game) = visitor.current_game.take() { games.push(game); } }
                             }
                         }
-
-                        // Start new game
                         current_game_text.clear();
                         current_game_text.push_str(&line);
                         current_game_text.push('\n');
                         in_game = true;
                     } else if in_game {
-                        // Continue accumulating current game
                         current_game_text.push_str(&line);
                         current_game_text.push('\n');
                     }
                 }
-                
                 // Don't forget the last game in the file
                 if in_game && !current_game_text.is_empty() {
                     game_number += 1;
@@ -277,8 +324,15 @@ impl VTab for ReadPgnVTab {
                         Err(e) => {
                             // Spec: pgn-parsing - Malformed Game Handling
                             // Capture partial game data with error message instead of skipping
-                            eprintln!("WARNING: Error parsing game #{} in file '{}': {}", 
+                            let error_msg = format!("Error parsing game #{} in file '{}': {}", 
                                 game_number, path.display(), e);
+                            eprintln!("WARNING: {} (captured with partial data)", error_msg);
+                            
+                            // Create partial game record with whatever data was parsed
+                            visitor.finalize_game_with_error(error_msg);
+                            if let Some(game) = visitor.current_game.take() {
+                                games.push(game);
+                            }
                         }
                     }
                 }
@@ -326,6 +380,7 @@ impl VTab for ReadPgnVTab {
         let mut termination_vec = output.flat_vector(13);
         let mut time_control_vec = output.flat_vector(14);
         let movetext_vec = output.flat_vector(15);
+        let mut parse_error_vec = output.flat_vector(16);
 
         for (i, game) in games.iter().skip(current_offset).take(count).enumerate() {
             // Spec: data-schema - NULL Value Handling
@@ -428,7 +483,12 @@ impl VTab for ReadPgnVTab {
             // Insert movetext (always present, never NULL - empty string if no moves)
             movetext_vec.insert(i, CString::new(game.movetext.as_str())?);
 
+            // Spec: data-schema - Parse Error Column
+            // Insert parse_error (NULL for successful games, error message for failed games)
+            if let Some(ref error) = game.parse_error {
+                parse_error_vec.insert(i, CString::new(error.as_str())?);
             } else {
+                parse_error_vec.set_null(i);
             }
         }
 
