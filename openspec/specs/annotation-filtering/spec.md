@@ -3,17 +3,6 @@
 ## Purpose
 To provide mechanisms for cleaning and normalizing chess game text, specifically removing annotations (comments) to facilitate analysis of raw move sequences.
 ## Requirements
-### Requirement: Movetext Annotation Removal
-The system SHALL provide a `filter_movetext_annotations(movetext)` **scalar** function that removes curly brace annotations from chess movetext while preserving the move structure.
-
-#### Scenario: Scalar usage in projection
-- **WHEN** user calls `SELECT filter_movetext_annotations(movetext) FROM table`
-- **THEN** the function returns the filtered movetext for each row
-
-#### Scenario: Empty input handling
-- **WHEN** the function receives an empty string
-- **THEN** it returns an empty string
-
 ### Requirement: Nested Annotation Handling
 The system SHALL correctly handle nested curly braces within annotations.
 

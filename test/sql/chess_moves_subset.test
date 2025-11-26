@@ -1,0 +1,90 @@
+# name: test/sql/chess_moves_subset.test
+# description: Test chess_moves_subset scalar function (Spec: move-analysis - Subsumption Detection)
+# group: [chess_moves_subset]
+
+require duckdb_chess
+
+# Test exact subset - short is prefix of long
+query I
+SELECT chess_moves_subset('1. e4', '1. e4 e5');
+----
+true
+
+# Test not a subset - different moves
+query I
+SELECT chess_moves_subset('1. d4', '1. e4 e5');
+----
+false
+
+# Test same game - identical sequences
+query I
+SELECT chess_moves_subset('1. e4 e5', '1. e4 e5');
+----
+true
+
+# Test short is longer than long
+query I
+SELECT chess_moves_subset('1. e4 e5 2. Nf3', '1. e4');
+----
+false
+
+# Test subset with annotations ignored
+query I
+SELECT chess_moves_subset('1. e4 {comment} e5', '1. e4 e5 2. Nf3');
+----
+true
+
+# Test subset with variations ignored
+query I
+SELECT chess_moves_subset('1. e4 (1. d4) e5', '1. e4 e5 2. Nf3');
+----
+true
+
+# Test subset with NAGs ignored
+query I
+SELECT chess_moves_subset('1. e4! e5?', '1. e4 e5 2. Nf3');
+----
+true
+
+# Test empty string cases
+query I
+SELECT chess_moves_subset('', '1. e4');
+----
+true
+
+query I
+SELECT chess_moves_subset('1. e4', '');
+----
+false
+
+query I
+SELECT chess_moves_subset('', '');
+----
+true
+
+# Test returns BOOLEAN type
+query I
+SELECT typeof(chess_moves_subset('1. e4', '1. e4 e5'));
+----
+BOOLEAN
+
+# Test subsumption detection use case - find subsumed games
+statement ok
+CREATE TABLE game_fragments AS SELECT * FROM (VALUES
+    ('1. e4 e5', 'Fragment 1'),
+    ('1. e4 e5 2. Nf3', 'Complete Game 1'),
+    ('1. e4 e5 2. Nf3 Nc6', 'Complete Game 2'),
+    ('1. d4 d5', 'Different Game')
+) AS t(movetext, name);
+
+# Find games that are subsumed by other games
+query II
+SELECT a.name as short_game, b.name as long_game
+FROM game_fragments a, game_fragments b
+WHERE a.name != b.name
+  AND chess_moves_subset(a.movetext, b.movetext)
+ORDER BY a.name, b.name;
+----
+Complete Game 1	Complete Game 2
+Fragment 1	Complete Game 1
+Fragment 1	Complete Game 2

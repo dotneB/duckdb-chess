@@ -1,0 +1,15 @@
+## 1. Implementation
+- [x] 1.1 Implement `chess_moves_normalize` scalar function
+    - Replace/Refactor `filter_movetext_annotations` logic to also strip variations and NAGs.
+    - Update `src/chess/filter.rs` (or move to `src/chess/moves.rs` if appropriate).
+    - Register as `chess_moves_normalize`.
+- [x] 1.2 Implement `chess_moves_hash` scalar function
+- [x] 1.3 Implement `chess_moves_subset` scalar function
+- [x] 1.4 Rename `moves_json` to `chess_moves_json`
+    - Update `src/chess/moves.rs` implementation.
+    - Update registration in `lib.rs` / `mod.rs`.
+- [x] 1.5 Register new functions in `lib.rs`
+- [x] 1.6 Update and Migrate Tests
+    - Update `test/sql/moves_json.test` to use `chess_moves_json`.
+    - Update `test/sql/filter_movetext_annotations.test` to use `chess_moves_normalize` (verify stricter behavior).
+    - Add new tests for `chess_moves_hash` and `chess_moves_subset`.

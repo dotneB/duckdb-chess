@@ -1,0 +1,17 @@
+# name: test/sql/chess_moves_normalize_column.test
+# description: Test chess_moves_normalize function on columns
+# group: [chess_moves_normalize]
+
+require duckdb_chess
+
+statement ok
+CREATE TABLE games (id INT, movetext VARCHAR);
+
+statement ok
+INSERT INTO games VALUES (1, '1. e4 { start } e5'), (2, '1. d4 { other } d5');
+
+query II
+SELECT id, chess_moves_normalize(movetext) FROM games ORDER BY id;
+----
+1	e4 e5
+2	d4 d5

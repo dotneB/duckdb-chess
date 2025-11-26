@@ -7,10 +7,13 @@ use libduckdb_sys::duckdb_string_t;
 use std::ffi::CString;
 use std::error::Error;
 
-/// Spec: annotation-filtering - Movetext Annotation Removal
 /// Removes curly brace annotations from chess movetext while preserving move structure
+/// Spec: annotation-filtering - Movetext Annotation Removal
 /// Spec: annotation-filtering - Nested Annotation Handling (tracks brace depth)
 /// Spec: annotation-filtering - Whitespace Normalization (collapses spaces and trims)
+/// 
+/// Note: This function preserves move numbers. For a canonical representation without
+/// move numbers, use normalize_movetext() or the chess_moves_normalize SQL function.
 pub fn filter_movetext_annotations(movetext: &str) -> String {
     let mut result = String::new();
     let mut in_annotation = false;
@@ -48,6 +51,151 @@ pub fn filter_movetext_annotations(movetext: &str) -> String {
     result.trim().to_string()
 }
 
+/// Normalize chess movetext by removing comments {}, variations (), and NAGs ($n, !, ?, etc.)
+/// Returns a canonical string representation with standardized spacing
+/// Spec: move-analysis - Moves Normalization
+pub fn normalize_movetext(movetext: &str) -> String {
+    // Preprocess: add space after move numbers like "1.e4" -> "1. e4"
+    let preprocessed = preprocess_move_numbers(movetext);
+    
+    let mut result = String::new();
+    let mut in_comment = false;
+    let mut in_variation = false;
+    let mut comment_depth = 0;
+    let mut variation_depth = 0;
+    let mut prev_was_space = false;
+    let mut buffer = String::new();
+
+    for ch in preprocessed.chars() {
+        match ch {
+            '{' => {
+                in_comment = true;
+                comment_depth += 1;
+            }
+            '}' => {
+                comment_depth -= 1;
+                if comment_depth == 0 {
+                    in_comment = false;
+                    prev_was_space = true;
+                }
+            }
+            '(' => {
+                in_variation = true;
+                variation_depth += 1;
+            }
+            ')' => {
+                variation_depth -= 1;
+                if variation_depth == 0 {
+                    in_variation = false;
+                    prev_was_space = true;
+                }
+            }
+            ' ' if !in_comment && !in_variation => {
+                if !buffer.is_empty() {
+                    // Check if buffer contains NAG symbols to strip
+                    let cleaned = strip_nags(&buffer);
+                    if !cleaned.is_empty() && !is_move_number(&cleaned) {
+                        if !result.is_empty() && !prev_was_space {
+                            result.push(' ');
+                        }
+                        result.push_str(&cleaned);
+                        prev_was_space = false;
+                    }
+                    buffer.clear();
+                }
+                prev_was_space = true;
+            }
+            _ if !in_comment && !in_variation => {
+                buffer.push(ch);
+                prev_was_space = false;
+            }
+            _ => {}
+        }
+    }
+
+    // Process remaining buffer
+    if !buffer.is_empty() {
+        let cleaned = strip_nags(&buffer);
+        if !cleaned.is_empty() && !is_move_number(&cleaned) {
+            if !result.is_empty() && !prev_was_space {
+                result.push(' ');
+            }
+            result.push_str(&cleaned);
+        }
+    }
+
+    result.trim().to_string()
+}
+
+/// Check if a token is a move number (e.g., "1.", "12.", "1...")
+fn is_move_number(token: &str) -> bool {
+    // Check for patterns like "1.", "12.", "1..."
+    if token.ends_with('.') || token.contains("...") {
+        // Verify it starts with digits
+        token.chars().next().map_or(false, |c| c.is_ascii_digit())
+    } else {
+        false
+    }
+}
+
+/// Preprocess movetext to ensure space after move numbers
+/// Converts "1.e4" to "1. e4"
+fn preprocess_move_numbers(movetext: &str) -> String {
+    let mut result = String::new();
+    let mut chars = movetext.chars().peekable();
+    let mut in_number = false;
+    
+    while let Some(ch) = chars.next() {
+        result.push(ch);
+        
+        // Track if we're in a move number (digits followed by .)
+        if ch.is_ascii_digit() {
+            in_number = true;
+        } else if ch == '.' && in_number {
+            // This is a move number period
+            // Check if next char is not whitespace and not another period
+            if let Some(&next_ch) = chars.peek() {
+                if !next_ch.is_whitespace() && next_ch != '.' {
+                    result.push(' ');
+                }
+            }
+            in_number = false;
+        } else if !ch.is_ascii_digit() {
+            in_number = false;
+        }
+    }
+    
+    result
+}
+
+/// Strip NAG symbols from a token
+/// NAGs include: !, ?, !!, ??, !?, ?!, $1, $2, etc.
+fn strip_nags(token: &str) -> String {
+    let mut result = String::new();
+    let mut chars = token.chars().peekable();
+    
+    while let Some(ch) = chars.next() {
+        match ch {
+            '$' => {
+                // Skip $ and following digits
+                while chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+                    chars.next();
+                }
+            }
+            '!' | '?' => {
+                // Skip NAG symbols (!, ??, !!, ?!, !?)
+                // Continue skipping consecutive ! and ?
+                while chars.peek().map_or(false, |c| *c == '!' || *c == '?') {
+                    chars.next();
+                }
+            }
+            _ => result.push(ch),
+        }
+    }
+    
+    result
+}
+
 pub struct FilterMovetextScalar;
 
 impl VScalar for FilterMovetextScalar {
@@ -69,6 +217,38 @@ impl VScalar for FilterMovetextScalar {
             let val = read_duckdb_string(input_slice[i]);
             let filtered = filter_movetext_annotations(&val);
             output_vec.insert(i, CString::new(filtered)?);
+        }
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        )]
+    }
+}
+
+pub struct ChessMovesNormalizeScalar;
+
+impl VScalar for ChessMovesNormalizeScalar {
+    type State = ();
+
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let len = input.len();
+        let input_vec = input.flat_vector(0);
+        let output_vec = output.flat_vector();
+
+        let input_slice = input_vec.as_slice::<duckdb_string_t>();
+
+        for i in 0..len {
+            let val = read_duckdb_string(input_slice[i]);
+            let normalized = normalize_movetext(&val);
+            output_vec.insert(i, CString::new(normalized)?);
         }
         Ok(())
     }
@@ -138,5 +318,56 @@ mod tests {
     fn test_filter_leading_trailing_whitespace() {
         let input = "  1. e4 e5  ";
         assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
+    }
+
+    #[test]
+    fn test_normalize_removes_comments_variations_nags() {
+        let input = "1. e4 {comment} (1. d4) e5?!";
+        assert_eq!(normalize_movetext(input), "e4 e5");
+    }
+
+    #[test]
+    fn test_normalize_complex() {
+        let input = "1. e4! {Best by test} (1. d4 d5) e5?? $1 2. Nf3";
+        assert_eq!(normalize_movetext(input), "e4 e5 Nf3");
+    }
+
+    #[test]
+    fn test_normalize_nag_symbols() {
+        assert_eq!(normalize_movetext("1. e4!"), "e4");
+        assert_eq!(normalize_movetext("1. e4?"), "e4");
+        assert_eq!(normalize_movetext("1. e4!!"), "e4");
+        assert_eq!(normalize_movetext("1. e4??"), "e4");
+        assert_eq!(normalize_movetext("1. e4!?"), "e4");
+        assert_eq!(normalize_movetext("1. e4?!"), "e4");
+        assert_eq!(normalize_movetext("1. e4$1"), "e4");
+        assert_eq!(normalize_movetext("1. e4$10"), "e4");
+    }
+
+    #[test]
+    fn test_normalize_nested_variations() {
+        let input = "1. e4 (1. d4 (1. c4)) e5";
+        assert_eq!(normalize_movetext(input), "e4 e5");
+    }
+
+    #[test]
+    fn test_normalize_empty() {
+        assert_eq!(normalize_movetext(""), "");
+    }
+
+    #[test]
+    fn test_strip_nags() {
+        assert_eq!(strip_nags("e4!"), "e4");
+        assert_eq!(strip_nags("e4?"), "e4");
+        assert_eq!(strip_nags("e4!!"), "e4");
+        assert_eq!(strip_nags("e4$1"), "e4");
+        assert_eq!(strip_nags("Nf3+"), "Nf3+");
+        assert_eq!(strip_nags("O-O"), "O-O");
+    }
+
+    #[test]
+    fn test_normalize_with_different_spacing() {
+        assert_eq!(normalize_movetext("1. e4 e5"), normalize_movetext("1.e4 e5"));
+        assert_eq!(normalize_movetext("1. e4 e5"), normalize_movetext("1.  e4  e5"));
     }
 }

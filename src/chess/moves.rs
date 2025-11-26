@@ -6,15 +6,17 @@ use duckdb::{
 };
 use libduckdb_sys::duckdb_string_t;
 use shakmaty::{Chess, Position, san::SanPlus, EnPassantMode};
+use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::CString;
 use std::fmt::Write;
+use std::hash::{Hash, Hasher};
 
-use crate::chess::filter::filter_movetext_annotations;
+use crate::chess::filter::normalize_movetext;
 
-pub struct MovesJsonScalar;
+pub struct ChessMovesJsonScalar;
 
-impl VScalar for MovesJsonScalar {
+impl VScalar for ChessMovesJsonScalar {
     type State = ();
 
     unsafe fn invoke(
@@ -52,7 +54,7 @@ impl VScalar for MovesJsonScalar {
 }
 
 fn process_moves(movetext: &str) -> Result<String, Box<dyn Error>> {
-    let clean_text = filter_movetext_annotations(movetext);
+    let clean_text = normalize_movetext(movetext);
     let mut pos = Chess::default();
     let mut json = String::new();
     
@@ -114,6 +116,115 @@ unsafe fn read_duckdb_string(s: duckdb_string_t) -> String {
         let slice = std::slice::from_raw_parts(ptr as *const u8, len);
         String::from_utf8_lossy(slice).into_owned()
     }
+}
+
+// Spec: move-analysis - Moves Hashing
+pub struct ChessMovesHashScalar;
+
+impl VScalar for ChessMovesHashScalar {
+    type State = ();
+
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let len = input.len();
+        let input_vec = input.flat_vector(0);
+        let mut output_vec = output.flat_vector();
+
+        let input_slice = input_vec.as_slice::<duckdb_string_t>();
+        let output_slice = output_vec.as_mut_slice::<i64>();
+
+        for i in 0..len {
+            let val = read_duckdb_string(input_slice[i]);
+            let normalized = normalize_movetext(&val);
+            
+            // Compute hash
+            let mut hasher = DefaultHasher::new();
+            normalized.hash(&mut hasher);
+            output_slice[i] = hasher.finish() as i64;
+        }
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+        )]
+    }
+}
+
+// Spec: move-analysis - Subsumption Detection
+pub struct ChessMovesSubsetScalar;
+
+impl VScalar for ChessMovesSubsetScalar {
+    type State = ();
+
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let len = input.len();
+        let input_vec_0 = input.flat_vector(0);
+        let input_vec_1 = input.flat_vector(1);
+        let mut output_vec = output.flat_vector();
+
+        let input_slice_0 = input_vec_0.as_slice::<duckdb_string_t>();
+        let input_slice_1 = input_vec_1.as_slice::<duckdb_string_t>();
+        let output_slice = output_vec.as_mut_slice::<bool>();
+
+        for i in 0..len {
+            let short_text = read_duckdb_string(input_slice_0[i]);
+            let long_text = read_duckdb_string(input_slice_1[i]);
+            
+            output_slice[i] = check_moves_subset(&short_text, &long_text);
+        }
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ],
+            LogicalTypeHandle::from(LogicalTypeId::Boolean),
+        )]
+    }
+}
+
+fn check_moves_subset(short_movetext: &str, long_movetext: &str) -> bool {
+    let short_normalized = normalize_movetext(short_movetext);
+    let long_normalized = normalize_movetext(long_movetext);
+    
+    // Extract just the moves (without move numbers)
+    let short_moves = extract_moves(&short_normalized);
+    let long_moves = extract_moves(&long_normalized);
+    
+    // Check if short is a prefix of long
+    if short_moves.len() > long_moves.len() {
+        return false;
+    }
+    
+    short_moves.iter()
+        .zip(long_moves.iter())
+        .all(|(s, l)| s == l)
+}
+
+fn extract_moves(movetext: &str) -> Vec<String> {
+    movetext
+        .split_whitespace()
+        .filter(|token| {
+            // Skip move numbers (e.g., "1.", "2.", "1...")
+            !token.ends_with('.') && !token.contains("...")
+                // Skip result markers
+                && *token != "1-0" && *token != "0-1" && *token != "1/2-1/2" && *token != "*"
+        })
+        .map(|s| s.to_string())
+        .collect()
 }
 
 #[cfg(test)]

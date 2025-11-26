@@ -1,8 +1,5 @@
-# move-analysis Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-moves-function. Update Purpose after archive.
-## Requirements
 ### Requirement: Move Extraction to JSON
 The system SHALL provide a scalar function `chess_moves_json(movetext)` that parses PGN movetext and returns a JSON array string containing details for every move.
 
@@ -35,6 +32,8 @@ The system SHALL provide a scalar function `chess_moves_json(movetext)` that par
 #### Scenario: Annotation Filtering
 - **WHEN** the movetext contains comments/annotations (e.g., `'1. e4 {Best by test} e5'`)
 - **THEN** the annotations are ignored, and the moves are parsed correctly.
+
+## ADDED Requirements
 
 ### Requirement: Moves Normalization
 The system SHALL provide a scalar function `chess_moves_normalize(movetext)` that returns a canonical string representation of the move sequence, removing comments, recursive variations, and NAGs, while standardizing spacing.
@@ -76,4 +75,3 @@ The system SHALL provide a scalar function `chess_moves_subset(short_movetext, l
 #### Scenario: Short is longer than long
 - **WHEN** user calls `chess_moves_subset('1. e4 e5', '1. e4')`
 - **THEN** the function returns `FALSE`.
-

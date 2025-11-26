@@ -1,0 +1,71 @@
+# name: test/sql/chess_moves_hash.test
+# description: Test chess_moves_hash scalar function (Spec: move-analysis - Moves Hashing)
+# group: [chess_moves_hash]
+
+require duckdb_chess
+
+# Test hash consistency - identical moves with different formatting
+query I
+SELECT (chess_moves_hash('1. e4 e5') = chess_moves_hash('1.e4 e5'))::BOOLEAN;
+----
+true
+
+# Test hash consistency - identical moves with comments
+query I
+SELECT (chess_moves_hash('1. e4 {comment} e5') = chess_moves_hash('1. e4 e5'))::BOOLEAN;
+----
+true
+
+# Test hash consistency - identical moves with variations
+query I
+SELECT (chess_moves_hash('1. e4 (1. d4) e5') = chess_moves_hash('1. e4 e5'))::BOOLEAN;
+----
+true
+
+# Test hash consistency - identical moves with NAGs
+query I
+SELECT (chess_moves_hash('1. e4! e5?') = chess_moves_hash('1. e4 e5'))::BOOLEAN;
+----
+true
+
+# Test hash discrimination - different moves produce different hashes
+query I
+SELECT (chess_moves_hash('1. e4 e5') != chess_moves_hash('1. d4 d5'))::BOOLEAN;
+----
+true
+
+# Test hash discrimination - different length sequences
+query I
+SELECT (chess_moves_hash('1. e4') != chess_moves_hash('1. e4 e5'))::BOOLEAN;
+----
+true
+
+# Test hash with empty string
+query I
+SELECT chess_moves_hash('');
+----
+3476900567878811119
+
+# Test hash returns BIGINT
+query I
+SELECT typeof(chess_moves_hash('1. e4 e5'));
+----
+BIGINT
+
+# Test deduplication use case - find duplicates
+statement ok
+CREATE TABLE games AS SELECT * FROM (VALUES
+    ('1. e4 e5 2. Nf3', 'Game 1'),
+    ('1.e4 e5 2.Nf3', 'Game 2'),
+    ('1. e4 {best} e5 2. Nf3', 'Game 3'),
+    ('1. d4 d5', 'Game 4')
+) AS t(movetext, name);
+
+query II
+SELECT chess_moves_hash(movetext), COUNT(*) as count
+FROM games
+GROUP BY 1
+HAVING COUNT(*) > 1
+ORDER BY count DESC;
+----
+-3658142033769421290	3

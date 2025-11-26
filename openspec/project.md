@@ -31,6 +31,9 @@ Key features:
 ### Code Style
 - Follow standard Rust formatting conventions (use `cargo fmt`)
 - Use snake_case for function and variable names
+- **DuckDB Scalar Functions**: All scalar functions exposed to SQL must be prefixed with `chess_`.
+  - Use `chess_move_` (singular) if the function operates on a single move (e.g. `chess_move_validate('e4')`).
+  - Use `chess_moves_` (plural) if the function operates on a sequence of moves / movetext (e.g. `chess_moves_normalize`, `chess_moves_hash`, `chess_moves_json`).
 - Use PascalCase for types and structs
 - Prefer explicit error handling with `Result<T, E>` over panics
 - Use descriptive variable names that reflect chess domain terminology
@@ -88,9 +91,10 @@ Key features:
    - Returns 16 columns matching Lichess schema
    - Handles malformed games gracefully (logs warnings, continues parsing)
 
-2. **filter_movetext_annotations(movetext)**: Utility function
-   - Removes curly brace annotations from movetext
+2. **chess_moves_normalize(movetext)**: Utility function
+   - Removes annotations, variations, and numeric glyphs from movetext
    - Preserves move structure and numbering
+   - Returns a canonical "main line" string
 
 ## Important Constraints
 - **DuckDB Version**: Target v1.4.1 (set in Makefile)
