@@ -1,0 +1,28 @@
+# Tasks: Refactor Monolithic lib.rs
+
+- [x] Create `src/types.rs` <!-- id: 0 -->
+    - Move `GameRecord` struct definition
+    - Add necessary imports (e.g. `serde` if used, or just standard types)
+- [x] Create `src/visitor.rs` <!-- id: 1 -->
+    - Move `GameVisitor` struct and implementation
+    - Move `PgnReaderState` and `SharedState` structs
+    - Move `Visitor` trait implementation for `GameVisitor`
+    - Add imports (`types::GameRecord`, `pgn_reader::*`, etc.)
+- [x] Create `src/filter.rs` <!-- id: 2 -->
+    - Move `filter_movetext_annotations` function
+    - Move `FilterMovetextVTab`, `FilterMovetextBindData`, `FilterMovetextInitData`
+    - Add imports (`duckdb::*`, etc.)
+- [x] Create `src/reader.rs` <!-- id: 3 -->
+    - Move `ReadPgnVTab`, `ReadPgnBindData`, `ReadPgnInitData`
+    - Add imports (`duckdb::*`, `types::GameRecord`, `visitor::*`, etc.)
+- [x] Update `src/lib.rs` <!-- id: 4 -->
+    - Add `mod types;`, `mod visitor;`, `mod reader;`, `mod filter;`
+    - Remove moved code
+    - Ensure `extension_entrypoint` correctly registers functions from new modules
+- [x] Fix imports and visibility <!-- id: 5 -->
+    - Ensure struct fields in `types.rs` are `pub`
+    - Ensure `visitor` structs used by `reader` are `pub`
+    - Run `cargo check` to catch all visibility/import errors
+- [x] Verify functionality <!-- id: 6 -->
+    - Run `cargo check`
+    - Run `make test_debug` (if environment permits) or ensure compilation succeeds
