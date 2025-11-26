@@ -18,6 +18,7 @@ use std::{
     ops::ControlFlow,
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
+    sync::Mutex,
 };
 
 /// Stores parsed game data from PGN - matches Lichess dataset schema
@@ -136,7 +137,35 @@ impl GameVisitor {
     }
 }
 
+struct PgnReaderState {
+    reader: BufReader<File>,
+    path_idx: usize,
+    game_buffer: String,
+    record_buffer: GameRecord,
+    line_buffer: Vec<u8>,
+    visitor: GameVisitor,
+}
+
+impl PgnReaderState {
+    fn new(reader: BufReader<File>, path_idx: usize) -> Self {
+        Self {
+            reader,
+            path_idx,
+            game_buffer: String::new(),
+            record_buffer: GameRecord::default(),
+            line_buffer: Vec::new(),
+            visitor: GameVisitor::new(),
+        }
+    }
+}
+
+struct SharedState {
+    next_path_idx: usize,
+    available_readers: Vec<PgnReaderState>,
+}
+
 impl Visitor for GameVisitor {
+
     type Tags = ();
     type Movetext = String;
     type Output = ();
@@ -196,9 +225,7 @@ struct ReadPgnBindData {
 
 #[repr(C)]
 struct ReadPgnInitData {
-    done: AtomicBool,
-    games: std::sync::Mutex<Option<Vec<GameRecord>>>,
-    offset: std::sync::atomic::AtomicUsize,
+    state: Mutex<SharedState>,
 }
 
 struct ReadPgnVTab;
@@ -250,158 +277,16 @@ impl VTab for ReadPgnVTab {
 
     fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
         Ok(ReadPgnInitData {
-            done: AtomicBool::new(false),
-            games: std::sync::Mutex::new(None),
-            offset: std::sync::atomic::AtomicUsize::new(0),
+            state: Mutex::new(SharedState {
+                next_path_idx: 0,
+                available_readers: Vec::new(),
+            }),
         })
     }
 
     fn func(func: &TableFunctionInfo<Self>, output: &mut DataChunkHandle) -> Result<(), Box<dyn std::error::Error>> {
         let init_data = func.get_init_data();
         let bind_data = func.get_bind_data();
-
-        // Spec: pgn-parsing - Thread Safety
-        // Parse all PGN files on first call (atomic flag ensures single initialization)
-        if !init_data.done.swap(true, Ordering::Relaxed) {
-            let mut games = Vec::new();
-            let mut visitor = GameVisitor::new();
-
-            // Spec: pgn-parsing - PGN File Reading (Glob pattern parsing)
-            // Iterate over all paths (from glob expansion or single file)
-            for path in &bind_data.paths {
-                let file = File::open(path).map_err(|e| {
-                    format!("Failed to open file '{}': {}", path.display(), e)
-                })?;
-                let mut reader = BufReader::new(file);
-
-                // Spec: pgn-parsing - Game Boundary Detection
-                // Split file into individual games and parse each separately
-                let mut current_game_text = String::new();
-                let mut game_number = 0;
-                let mut in_game = false;
-                let mut buffer = Vec::new();
-
-                loop {
-                    buffer.clear();
-                    match reader.read_until(b'\n', &mut buffer) {
-                        Ok(0) => break, // EOF
-                        Ok(_) => {
-                            // Spec: pgn-parsing - UTF-8 Handling
-                            // Use lossy conversion to handle invalid UTF-8 bytes by replacing them
-                            // with the replacement character (), preventing data loss from skipped lines.
-                            let mut line = String::from_utf8_lossy(&buffer).into_owned();
-                            
-                            // Trim newline characters to match BufRead::lines() behavior
-                            if line.ends_with('\n') {
-                                line.pop();
-                                if line.ends_with('\r') {
-                                    line.pop();
-                                }
-                            }
-
-                            // Check if we're starting a new game (starts with [Event header)
-                            if line.starts_with("[Event ") {
-                                // If we have accumulated a previous game, try to parse it
-                                if in_game && !current_game_text.is_empty() {
-                                    game_number += 1;
-                                    // Try to parse the accumulated game
-                                    let game_bytes = current_game_text.as_bytes();
-                                    let mut game_reader = Reader::new(game_bytes);
-                                    match game_reader.read_game(&mut visitor) {
-                                        Ok(Some(_)) => {
-                                            if let Some(game) = visitor.current_game.take() {
-                                                games.push(game);
-                                            }
-                                        }
-                                        Ok(None) => {}
-                                        Err(e) => {
-                                            // Spec: pgn-parsing - Malformed Game Handling
-                                            // Capture partial game data with error message instead of skipping
-                                            let error_msg = format!("Error parsing game #{} in file '{}': {}", 
-                                                game_number, path.display(), e);
-                                            eprintln!("WARNING: {} (captured with partial data)", error_msg);
-                                            
-                                            // Create partial game record with whatever data was parsed
-                                            visitor.finalize_game_with_error(error_msg);
-                                            if let Some(game) = visitor.current_game.take() {
-                                                games.push(game);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Start new game
-                                current_game_text.clear();
-                                current_game_text.push_str(&line);
-                                current_game_text.push('\n');
-                                in_game = true;
-                            } else if in_game {
-                                // Continue accumulating current game
-                                current_game_text.push_str(&line);
-                                current_game_text.push('\n');
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("WARNING: Error reading line in file '{}': {} (skipped)", path.display(), e);
-                            continue;
-                        }
-                    }
-                }
-
-                // Don't forget the last game in the file
-                if in_game && !current_game_text.is_empty() {
-                    game_number += 1;
-                    let game_bytes = current_game_text.as_bytes();
-                    let mut game_reader = Reader::new(game_bytes);
-                    match game_reader.read_game(&mut visitor) {
-                        Ok(Some(_)) => {
-                            if let Some(game) = visitor.current_game.take() {
-                                games.push(game);
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            // Spec: pgn-parsing - Malformed Game Handling
-                            // Capture partial game data with error message instead of skipping
-                            let error_msg = format!("Error parsing game #{} in file '{}': {}", 
-                                game_number, path.display(), e);
-                            eprintln!("WARNING: {} (captured with partial data)", error_msg);
-                            
-                            // Create partial game record with whatever data was parsed
-                            visitor.finalize_game_with_error(error_msg);
-                            if let Some(game) = visitor.current_game.take() {
-                                games.push(game);
-                            }
-                        }
-                    }
-                }
-            }
-
-            *init_data.games.lock().unwrap() = Some(games);
-        }
-
-        // Output games in chunks
-        let current_offset = init_data.offset.load(Ordering::Relaxed);
-
-        let games_guard = init_data.games.lock().unwrap();
-        let games = match games_guard.as_ref() {
-            Some(g) => g,
-            None => {
-                output.set_len(0);
-                return Ok(());
-            }
-        };
-
-        // Check if we've output all games
-        if current_offset >= games.len() {
-            output.set_len(0);
-            return Ok(());
-        }
-
-        // Spec: pgn-parsing - Chunked Output
-        // Output up to 2048 games per chunk to manage memory efficiently
-        let remaining = games.len() - current_offset;
-        let count = remaining.min(2048);
 
         let mut event_vec = output.flat_vector(0);
         let mut site_vec = output.flat_vector(1);
@@ -418,124 +303,182 @@ impl VTab for ReadPgnVTab {
         let mut opening_vec = output.flat_vector(12);
         let mut termination_vec = output.flat_vector(13);
         let mut time_control_vec = output.flat_vector(14);
-        let movetext_vec = output.flat_vector(15);
+        let mut movetext_vec = output.flat_vector(15);
         let mut parse_error_vec = output.flat_vector(16);
 
-        for (i, game) in games.iter().skip(current_offset).take(count).enumerate() {
-            // Spec: data-schema - NULL Value Handling
-            // Insert strings with proper NULL handling (NULL for missing headers, not empty strings)
-            if let Some(ref val) = game.event {
-                event_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                event_vec.set_null(i);
-            }
-            
-            if let Some(ref val) = game.site {
-                site_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                site_vec.set_null(i);
-            }
-            
-            if let Some(ref val) = game.white {
-                white_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                white_vec.set_null(i);
-            }
-            
-            if let Some(ref val) = game.black {
-                black_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                black_vec.set_null(i);
-            }
-            
-            if let Some(ref val) = game.result {
-                result_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                result_vec.set_null(i);
-            }
-            
-            if let Some(ref val) = game.white_title {
-                white_title_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                white_title_vec.set_null(i);
-            }
-            
-            if let Some(ref val) = game.black_title {
-                black_title_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                black_title_vec.set_null(i);
+        let mut count = 0;
+        let mut current_reader_state: Option<PgnReaderState> = None;
+
+        while count < 2048 {
+            // Acquire work
+            if current_reader_state.is_none() {
+                let mut state = init_data.state.lock().unwrap();
+                
+                if let Some(reader) = state.available_readers.pop() {
+                    current_reader_state = Some(reader);
+                } else if state.next_path_idx < bind_data.paths.len() {
+                    let path_idx = state.next_path_idx;
+                    state.next_path_idx += 1;
+                    
+                    // Unlock early to allow parallelism
+                    drop(state);
+
+                    let path = &bind_data.paths[path_idx];
+                    match File::open(path) {
+                        Ok(file) => {
+                            current_reader_state = Some(PgnReaderState::new(BufReader::new(file), path_idx));
+                        },
+                        Err(e) => {
+                            let err_msg = format!("Failed to open file '{}': {}", path.display(), e);
+                            // If we only have one path (likely explicit single file), fail hard.
+                            // If we have multiple (glob result), warn and skip.
+                            if bind_data.paths.len() == 1 {
+                                return Err(err_msg.into());
+                            } else {
+                                eprintln!("WARNING: {}", err_msg);
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    // No more work
+                    break;
+                }
             }
 
-            // Insert ELO ratings as strings (storing integers as VARCHAR)
-            if let Some(elo) = game.white_elo {
-                white_elo_vec.insert(i, CString::new(elo.to_string())?);
-            } else {
-                white_elo_vec.set_null(i);
-            }
-            
-            if let Some(elo) = game.black_elo {
-                black_elo_vec.insert(i, CString::new(elo.to_string())?);
-            } else {
-                black_elo_vec.set_null(i);
-            }
+            // Process using current reader
+            if let Some(mut reader) = current_reader_state.take() {
+                let mut game_found = false;
+                
+                // Read lines loop
+                loop {
+                    reader.line_buffer.clear();
+                    match reader.reader.read_until(b'\n', &mut reader.line_buffer) {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            let mut line = String::from_utf8_lossy(&reader.line_buffer).into_owned();
+                            if line.ends_with('\n') { line.pop(); if line.ends_with('\r') { line.pop(); } }
 
-            // Insert date/time
-            if let Some(ref val) = game.utc_date {
-                utc_date_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                utc_date_vec.set_null(i);
-            }
-            
-            if let Some(ref val) = game.utc_time {
-                utc_time_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                utc_time_vec.set_null(i);
-            }
+                            if line.starts_with("[Event ") {
+                                if !reader.game_buffer.is_empty() {
+                                    // Parse previous game
+                                    let game_bytes = reader.game_buffer.as_bytes();
+                                    let mut game_reader = Reader::new(game_bytes);
+                                    
+                                    // Reset visitor for new game
+                                    reader.visitor.begin_tags(); // Manually clear (although read_game calls it)
+                                    // Actually read_game calls begin_tags.
+                                    
+                                    // We need to handle the fact that visitor state is persistent in PgnReaderState
+                                    // read_game calls visitor methods.
+                                    
+                                    match game_reader.read_game(&mut reader.visitor) {
+                                        Ok(Some(_)) => {
+                                            if let Some(game) = reader.visitor.current_game.take() {
+                                                reader.record_buffer = game;
+                                                game_found = true;
+                                            }
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            let error_msg = format!("Error parsing game in file '{}': {}", 
+                                                bind_data.paths[reader.path_idx].display(), e);
+                                            reader.visitor.finalize_game_with_error(error_msg);
+                                            if let Some(game) = reader.visitor.current_game.take() {
+                                                reader.record_buffer = game;
+                                                game_found = true;
+                                            }
+                                        }
+                                    }
+                                }
 
-            // Insert opening info
-            if let Some(ref val) = game.eco {
-                eco_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                eco_vec.set_null(i);
-            }
-            
-            if let Some(ref val) = game.opening {
-                opening_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                opening_vec.set_null(i);
-            }
+                                reader.game_buffer.clear();
+                                reader.game_buffer.push_str(&line);
+                                reader.game_buffer.push('\n');
+                                
+                                if game_found {
+                                    break;
+                                }
+                            } else {
+                                reader.game_buffer.push_str(&line);
+                                reader.game_buffer.push('\n');
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("WARNING: Error reading file: {}", e);
+                            break; // Treat as EOF/Error
+                        }
+                    }
+                }
 
-            // Insert game details
-            if let Some(ref val) = game.termination {
-                termination_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                termination_vec.set_null(i);
-            }
-            
-            if let Some(ref val) = game.time_control {
-                time_control_vec.insert(i, CString::new(val.as_str())?);
-            } else {
-                time_control_vec.set_null(i);
-            }
+                // Handle EOF (last game in file)
+                if !game_found && !reader.game_buffer.is_empty() {
+                     // Try parse last game
+                     let game_bytes = reader.game_buffer.as_bytes();
+                     let mut game_reader = Reader::new(game_bytes);
+                     match game_reader.read_game(&mut reader.visitor) {
+                        Ok(Some(_)) => {
+                            if let Some(game) = reader.visitor.current_game.take() {
+                                reader.record_buffer = game;
+                                game_found = true;
+                            }
+                        }
+                         Ok(None) => {}
+                         Err(e) => {
+                             let error_msg = format!("Error parsing last game in file '{}': {}", 
+                                 bind_data.paths[reader.path_idx].display(), e);
+                             reader.visitor.finalize_game_with_error(error_msg);
+                             if let Some(game) = reader.visitor.current_game.take() {
+                                 reader.record_buffer = game;
+                                 game_found = true;
+                             }
+                         }
+                     }
+                     reader.game_buffer.clear(); // Consumed
+                }
 
-            // Spec: data-schema - Movetext Column (Movetext always present)
-            // Insert movetext (always present, never NULL - empty string if no moves)
-            movetext_vec.insert(i, CString::new(game.movetext.as_str())?);
+                if game_found {
+                    // Write to DuckDB
+                    let game = &reader.record_buffer;
+                    let i = count;
+                    
+                    if let Some(ref val) = game.event { event_vec.insert(i, CString::new(val.as_str())?); } else { event_vec.set_null(i); }
+                    if let Some(ref val) = game.site { site_vec.insert(i, CString::new(val.as_str())?); } else { site_vec.set_null(i); }
+                    if let Some(ref val) = game.white { white_vec.insert(i, CString::new(val.as_str())?); } else { white_vec.set_null(i); }
+                    if let Some(ref val) = game.black { black_vec.insert(i, CString::new(val.as_str())?); } else { black_vec.set_null(i); }
+                    if let Some(ref val) = game.result { result_vec.insert(i, CString::new(val.as_str())?); } else { result_vec.set_null(i); }
+                    if let Some(ref val) = game.white_title { white_title_vec.insert(i, CString::new(val.as_str())?); } else { white_title_vec.set_null(i); }
+                    if let Some(ref val) = game.black_title { black_title_vec.insert(i, CString::new(val.as_str())?); } else { black_title_vec.set_null(i); }
+                    if let Some(val) = game.white_elo { white_elo_vec.insert(i, CString::new(val.to_string())?); } else { white_elo_vec.set_null(i); }
+                    if let Some(val) = game.black_elo { black_elo_vec.insert(i, CString::new(val.to_string())?); } else { black_elo_vec.set_null(i); }
+                    if let Some(ref val) = game.utc_date { utc_date_vec.insert(i, CString::new(val.as_str())?); } else { utc_date_vec.set_null(i); }
+                    if let Some(ref val) = game.utc_time { utc_time_vec.insert(i, CString::new(val.as_str())?); } else { utc_time_vec.set_null(i); }
+                    if let Some(ref val) = game.eco { eco_vec.insert(i, CString::new(val.as_str())?); } else { eco_vec.set_null(i); }
+                    if let Some(ref val) = game.opening { opening_vec.insert(i, CString::new(val.as_str())?); } else { opening_vec.set_null(i); }
+                    if let Some(ref val) = game.termination { termination_vec.insert(i, CString::new(val.as_str())?); } else { termination_vec.set_null(i); }
+                    if let Some(ref val) = game.time_control { time_control_vec.insert(i, CString::new(val.as_str())?); } else { time_control_vec.set_null(i); }
+                    
+                    movetext_vec.insert(i, CString::new(game.movetext.as_str())?);
+                    
+                    if let Some(ref val) = game.parse_error { parse_error_vec.insert(i, CString::new(val.as_str())?); } else { parse_error_vec.set_null(i); }
 
-            // Spec: data-schema - Parse Error Column
-            // Insert parse_error (NULL for successful games, error message for failed games)
-            if let Some(ref error) = game.parse_error {
-                parse_error_vec.insert(i, CString::new(error.as_str())?);
-            } else {
-                parse_error_vec.set_null(i);
+                    count += 1;
+                    current_reader_state = Some(reader); // Return reader to local var for next iteration
+                } else {
+                    // Reader finished (EOF)
+                    // It will be dropped here (current_reader_state remains None)
+                    // Loop continues to acquire next reader
+                }
             }
         }
 
+        // Return reader to pool if we stopped due to count limit
+        if let Some(reader) = current_reader_state {
+            let mut state = init_data.state.lock().unwrap();
+            state.available_readers.push(reader);
+        }
+
         output.set_len(count);
-
-        // Update offset for next call
-        init_data.offset.fetch_add(count, Ordering::Relaxed);
-
         Ok(())
     }
 

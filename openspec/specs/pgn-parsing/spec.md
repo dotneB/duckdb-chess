@@ -1,7 +1,7 @@
 # PGN Parsing Capability
 
 ## Purpose
-To define the functionality for reading, parsing, and processing PGN (Portable Game Notation) files into structured queryable data.
+To define the functionality for reading, parsing, and processing PGN (Portable Game Notation) files into structured queryable data, including error handling and performance characteristics.
 
 ## Requirements
 
@@ -134,3 +134,17 @@ The reader MUST handle PGN files containing invalid UTF-8 sequences without fail
 - **WHEN** `read_pgn` reads a PGN file with valid UTF-8 content
 - **THEN** the content is preserved exactly as is
 - **AND** no replacement characters are introduced
+
+### Requirement: Streaming & Parallel Execution
+The PGN reader MUST use a streaming architecture that supports parallel processing across multiple files to maximize throughput on multi-core systems while maintaining constant memory usage.
+
+#### Scenario: Multi-file parallel processing
+- **WHEN** a glob pattern matches multiple PGN files (e.g., `data/*.pgn`)
+- **AND** the system has multiple CPU cores available
+- **THEN** multiple files are processed concurrently
+- **AND** the memory usage does not scale linearly with the dataset size
+
+#### Scenario: Large dataset processing
+- **WHEN** a glob pattern matches files larger than available RAM
+- **THEN** the query completes successfully without Out-Of-Memory errors
+- **AND** the system reads files sequentially or concurrently in chunks
