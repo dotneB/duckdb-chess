@@ -1,0 +1,13 @@
+# name: test/sql/read_pgn_bad_utf8_real.test
+# description: Test read_pgn with specific invalid UTF-8 byte from user report
+# group: [chess]
+
+require duckdb_chess
+
+# Test reading the file with invalid UTF-8 (byte 0x90)
+# Should replace 0x90 with replacement char (EF BF BD in UTF-8)
+# We check length (should be 13 chars) and the unicode code point of the 3rd char (should be 65533)
+query II
+SELECT length(Black), unicode(substr(Black, 3, 1)) FROM read_pgn('test/pgn_files/bad_utf8_real.pgn');
+----
+13	65533

@@ -120,3 +120,17 @@ The system SHALL use the pgn-reader library's Visitor trait for streaming PGN pa
 #### Scenario: Variation skipping
 - **WHEN** the visitor encounters move variations (alternate move sequences)
 - **THEN** variations are skipped to maintain the main game line
+
+### Requirement: UTF-8 Handling
+The reader MUST handle PGN files containing invalid UTF-8 sequences without failing or skipping lines.
+
+#### Scenario: Invalid UTF-8 bytes in header
+- **WHEN** `read_pgn` reads a PGN file containing a byte sequence invalid in UTF-8 (e.g., `0x90` in a name like "Djukin")
+- **THEN** the invalid bytes are replaced with the Unicode replacement character
+- **AND** the line is processed normally by the PGN parser
+- **AND** the game data is extracted successfully (with the replacement character in the string)
+
+#### Scenario: Valid UTF-8 content
+- **WHEN** `read_pgn` reads a PGN file with valid UTF-8 content
+- **THEN** the content is preserved exactly as is
+- **AND** no replacement characters are introduced

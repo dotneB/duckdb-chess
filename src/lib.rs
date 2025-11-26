@@ -281,34 +281,73 @@ impl VTab for ReadPgnVTab {
                 let mut in_game = false;
                 let mut buffer = Vec::new();
 
-                for line_result in reader.lines() {
-                    let line = match line_result {
-                        Ok(l) => l,
-                        Err(e) => { eprintln!("WARNING: Error reading line in file '{}': {} (skipped)", path.display(), e); continue; }
-                    };
-                    if line.starts_with("[Event ") {
-                        if in_game && !current_game_text.is_empty() {
-                            game_number += 1;
-                            let game_bytes = current_game_text.as_bytes();
-                            let mut game_reader = Reader::new(game_bytes);
-                            match game_reader.read_game(&mut visitor) {
-                                Ok(Some(_)) => { if let Some(game) = visitor.current_game.take() { games.push(game); } }
-                                Ok(None) => {}
-                                Err(e) => { let error_msg = format!("Error parsing game #{} in file '{}': {}", game_number, path.display(), e);
+                loop {
+                    buffer.clear();
+                    match reader.read_until(b'\n', &mut buffer) {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            // Spec: pgn-parsing - UTF-8 Handling
+                            // Use lossy conversion to handle invalid UTF-8 bytes by replacing them
+                            // with the replacement character (), preventing data loss from skipped lines.
+                            let mut line = String::from_utf8_lossy(&buffer).into_owned();
+                            
+                            // Trim newline characters to match BufRead::lines() behavior
+                            if line.ends_with('\n') {
+                                line.pop();
+                                if line.ends_with('\r') {
+                                    line.pop();
+                                }
+                            }
+
+                            // Check if we're starting a new game (starts with [Event header)
+                            if line.starts_with("[Event ") {
+                                // If we have accumulated a previous game, try to parse it
+                                if in_game && !current_game_text.is_empty() {
+                                    game_number += 1;
+                                    // Try to parse the accumulated game
+                                    let game_bytes = current_game_text.as_bytes();
+                                    let mut game_reader = Reader::new(game_bytes);
+                                    match game_reader.read_game(&mut visitor) {
+                                        Ok(Some(_)) => {
+                                            if let Some(game) = visitor.current_game.take() {
+                                                games.push(game);
+                                            }
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            // Spec: pgn-parsing - Malformed Game Handling
+                                            // Capture partial game data with error message instead of skipping
+                                            let error_msg = format!("Error parsing game #{} in file '{}': {}", 
+                                                game_number, path.display(), e);
                                             eprintln!("WARNING: {} (captured with partial data)", error_msg);
+                                            
+                                            // Create partial game record with whatever data was parsed
                                             visitor.finalize_game_with_error(error_msg);
-                                            if let Some(game) = visitor.current_game.take() { games.push(game); } }
+                                            if let Some(game) = visitor.current_game.take() {
+                                                games.push(game);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Start new game
+                                current_game_text.clear();
+                                current_game_text.push_str(&line);
+                                current_game_text.push('\n');
+                                in_game = true;
+                            } else if in_game {
+                                // Continue accumulating current game
+                                current_game_text.push_str(&line);
+                                current_game_text.push('\n');
                             }
                         }
-                        current_game_text.clear();
-                        current_game_text.push_str(&line);
-                        current_game_text.push('\n');
-                        in_game = true;
-                    } else if in_game {
-                        current_game_text.push_str(&line);
-                        current_game_text.push('\n');
+                        Err(e) => {
+                            eprintln!("WARNING: Error reading line in file '{}': {} (skipped)", path.display(), e);
+                            continue;
+                        }
                     }
                 }
+
                 // Don't forget the last game in the file
                 if in_game && !current_game_text.is_empty() {
                     game_number += 1;
