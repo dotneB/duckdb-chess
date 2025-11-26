@@ -1,6 +1,6 @@
 #![allow(special_module_name)]
 
-mod lib;
+mod chess;
 
 // To build the Wasm target, a `staticlib` crate-type is required
 //

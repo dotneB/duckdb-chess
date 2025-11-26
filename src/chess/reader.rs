@@ -1,4 +1,4 @@
-use crate::visitor::{PgnReaderState, SharedState};
+use super::visitor::{PgnReaderState, SharedState};
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},

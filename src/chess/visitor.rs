@@ -1,4 +1,4 @@
-use crate::types::GameRecord;
+use super::types::GameRecord;
 use pgn_reader::{RawComment, RawTag, SanPlus, Skip, Visitor};
 use std::fs::File;
 use std::io::BufReader;
