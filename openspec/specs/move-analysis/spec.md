@@ -1,7 +1,7 @@
 # move-analysis Specification
 
 ## Purpose
-TBD - created by archiving change add-moves-function. Update Purpose after archive.
+To provide analytical functions for chess move sequences, enabling JSON extraction, normalization, hashing, and subset comparison of movetext to support game analysis and comparison workflows.
 ## Requirements
 ### Requirement: Move Extraction to JSON
 The system SHALL provide a scalar function `chess_moves_json(movetext)` that parses PGN movetext and returns a JSON array string containing details for every move.

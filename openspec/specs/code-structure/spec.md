@@ -1,7 +1,7 @@
 # code-structure Specification
 
 ## Purpose
-TBD - created by archiving change refactor-lib-modules. Update Purpose after archive.
+To establish a modular architecture that separates concerns into dedicated modules (types, visitor, reader, filter) to prevent circular dependencies, improve testability, and maintain a clean codebase structure.
 ## Requirements
 ### Requirement: Shared Domain Types Module
 The project MUST define shared domain structures in a dedicated `types` module to prevent circular dependencies and promote reuse.
