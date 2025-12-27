@@ -11,20 +11,21 @@ Key features:
 - Compatible with Lichess database schema for easy integration
 
 ## Tech Stack
-- **Language**: Rust (2021 edition)
-- **Database**: DuckDB (v1.4.1)
+- **Language**: Rust (2024 edition)
+- **Database**: DuckDB (v1.4.3)
 - **Core Dependencies**:
-  - `duckdb` (1.4.1) - DuckDB Rust bindings with vtab-loadable features
-  - `duckdb-loadable-macros` (0.1.11) - Macros for loadable extensions
-  - `libduckdb-sys` (1.4.1) - Low-level DuckDB C API bindings
+  - `duckdb` (1.4.3) - DuckDB Rust bindings with vtab-loadable features
+  - `duckdb-ext-macros` (0.1.0) - Modern macros for loadable extensions (Rust 2024 compatible)
+  - `libduckdb-sys` (1.4.3) - Low-level DuckDB C API bindings
   - `pgn-reader` (0.28) - PGN parsing library
   - `shakmaty` (0.29) - Chess logic and move validation
   - `uuid` (1) - Unique identifier generation
   - `chrono` (0.4) - Date/time handling
   - `glob` (0.3) - File pattern matching
-- **Build System**: Make + Cargo
-- **Testing**: SQLLogicTest format using DuckDB Python client
-- **CI/CD**: GitHub Actions with extension-ci-tools infrastructure
+- **Build System**: Cargo + cargo-duckdb-ext-tools (optional Makefile wrappers)
+- **Build Tools**: `cargo-duckdb-ext-tools` - Native Rust packaging (replaces Python scripts)
+- **Testing**: SQLLogicTest format using DuckDB Python client + Rust unit tests
+- **CI/CD**: GitHub Actions with direct cargo builds
 
 ## Project Conventions
 
@@ -41,7 +42,7 @@ Key features:
 - Keep functions focused and relatively short (favor composition)
 
 ### Architecture Patterns
-- **Extension Entry Point**: Use `#[duckdb_entrypoint_c_api]` macro to define extension initialization
+- **Extension Entry Point**: Use `#[duckdb_extension]` macro from `duckdb-ext-macros` to define extension initialization
 - **Table Functions**: Implement `VTab` trait for exposing data as SQL tables
 - **Visitor Pattern**: Use `pgn-reader`'s `Visitor` trait for streaming PGN parsing
 - **Data Flow**:
@@ -62,15 +63,15 @@ Key features:
   - Glob pattern support
 - **Unit Testing**: Run `cargo test` to verify core logic in `src/filter.rs` and `src/visitor.rs`.
 - **Integration Testing**:
-  - Run `make debug` or `make release` **BEFORE** running tests to ensure the extension binary is up-to-date.
-  - Run `make test_debug` (debug build) or `make test_release` (release build).
+  - Run `cargo duckdb-ext-build` or `make build` to build the extension.
+  - Use `make test` to run Rust unit tests.
+  - For SQLLogicTest tests, manually load extension in DuckDB and verify functionality.
 - Use sample PGN files in `test/pgn_files/`.
-- Version testing: Change `DUCKDB_TEST_VERSION` environment variable to test against different DuckDB versions
 
 ### Git Workflow
 - Use descriptive commit messages that explain "why" not just "what"
 - Branch naming: feature/, bugfix/, refactor/, docs/
-- Test locally before pushing (`cargo test` && `make debug` && `make test_debug`)
+- Test locally before pushing: `cargo test` && `cargo duckdb-ext-build -- --release`
 - CI/CD pipeline runs on push via GitHub Actions
 - Extension must build for multiple platforms (Linux amd64/arm64, Windows, macOS)
 
@@ -97,10 +98,9 @@ Key features:
    - Returns a canonical "main line" string
 
 ## Important Constraints
-- **DuckDB Version**: Target v1.4.1 (set in Makefile)
-- **Unstable API**: Currently requires `USE_UNSTABLE_C_API=1` due to duckdb-rs dependencies
+- **DuckDB Version**: Target v1.4.3 (set in Cargo.toml dependencies)
+- **Rust Edition**: Requires Rust 2024 edition (Rust 1.88.0+)
 - **Platform Support**: Must build for Linux (amd64/arm64), Windows, macOS
-- **Python Version**: Python 3.12+ recommended (Python 3.11 has known issues on Windows)
 - **Unsigned Extensions**: Local testing requires `duckdb -unsigned` flag
 - **LTO & Strip**: Release builds use link-time optimization and symbol stripping for size
 - **Chunk Size**: Output limited to 2048 rows per chunk to manage memory
@@ -110,6 +110,7 @@ Key features:
 - **DuckDB C API**: Core extension interface via libduckdb-sys
 - **pgn-reader**: Third-party PGN parsing library from chess ecosystem
 - **shakmaty**: Chess move validation and game logic
-- **extension-ci-tools**: DuckDB's shared CI/CD infrastructure (included as Git submodule)
+- **cargo-duckdb-ext-tools**: Native Rust build and packaging tools (replaces Python scripts)
+- **duckdb-ext-macros**: Community-maintained procedural macros for Rust 2024 Edition
 - **GitHub Actions**: CI/CD platform for automated builds and testing
 - **SQLLogicTest**: Testing framework for SQL correctness verification

@@ -1,30 +1,64 @@
-.PHONY: clean clean_all
+# Simplified Makefile for DuckDB Chess Extension
+# 
+# This Makefile provides convenient aliases for cargo-based builds.
+# All targets are optional - you can use cargo commands directly.
+#
+# Prerequisites:
+#   - Rust toolchain (https://rustup.rs/)
+#   - cargo-duckdb-ext-tools: cargo install cargo-duckdb-ext-tools
+#
+# Usage:
+#   make build          - Build debug extension
+#   make release        - Build release extension  
+#   make test           - Run tests
+#   make clean          - Clean build artifacts
 
-PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+.PHONY: all build release test clean install-tools
 
-EXTENSION_NAME=duckdb_chess
+EXTENSION_NAME := duckdb_chess
 
-# Set to 1 to enable Unstable API (binaries will only work on TARGET_DUCKDB_VERSION, forwards compatibility will be broken)
-# Note: currently extension-template-rs requires this, as duckdb-rs relies on unstable C API functionality
-USE_UNSTABLE_C_API=1
+# Default target
+all: build
 
-# Target DuckDB version
-TARGET_DUCKDB_VERSION=v1.4.3
+# Install build tools (run once)
+install-tools:
+	@echo "Installing cargo-duckdb-ext-tools..."
+	cargo install cargo-duckdb-ext-tools --path "../cargo-duckdb-ext-tools"
 
-all: configure debug
+# Build debug extension
+build:
+	@echo "Building debug extension..."
+	cargo duckdb-ext-build
 
-# Include makefiles from DuckDB
-include extension-ci-tools/makefiles/c_api_extensions/base.Makefile
-include extension-ci-tools/makefiles/c_api_extensions/rust.Makefile
+# Build release extension
+release:
+	@echo "Building release extension..."
+	cargo duckdb-ext-build -- --release
 
-configure: venv platform extension_version
+# Run Rust unit tests
+test: build
+	@echo "Running cargo tests..."
+	cargo test
 
-debug: build_extension_library_debug build_extension_with_metadata_debug
-release: build_extension_library_release build_extension_with_metadata_release
+# Clean build artifacts
+clean:
+	@echo "Cleaning build artifacts..."
+	cargo clean
 
-test: test_debug
-test_debug: test_extension_debug
-test_release: test_extension_release
+# Development helper: run a quick build and test cycle
+dev: build test
 
-clean: clean_build clean_rust
-clean_all: clean_configure clean
+# Show available targets
+help:
+	@echo "Available targets:"
+	@echo "  make install-tools  - Install cargo-duckdb-ext-tools (one-time setup)"
+	@echo "  make build          - Build debug extension"
+	@echo "  make release        - Build release extension"
+	@echo "  make test           - Run Rust unit tests"
+	@echo "  make clean          - Clean build artifacts"
+	@echo "  make dev            - Quick build + test cycle"
+	@echo ""
+	@echo "Direct cargo commands:"
+	@echo "  cargo duckdb-ext-build                    - Build debug"
+	@echo "  cargo duckdb-ext-build -- --release       - Build release"
+	@echo "  cargo test                                - Run tests"

@@ -31,7 +31,7 @@ impl VScalar for ChessMovesJsonScalar {
         let input_slice = input_vec.as_slice::<duckdb_string_t>();
 
         for i in 0..len {
-            let val = read_duckdb_string(input_slice[i]);
+            let val = unsafe { read_duckdb_string(input_slice[i]) };
             match process_moves(&val) {
                 Ok(json) => {
                     output_vec.insert(i, CString::new(json)?);
@@ -105,15 +105,15 @@ fn duckdb_fen(pos: &Chess) -> String {
 }
 
 unsafe fn read_duckdb_string(s: duckdb_string_t) -> String {
-    if s.value.inlined.length <= 12 {
-        let len = s.value.inlined.length as usize;
-        let slice = &s.value.inlined.inlined;
-        let slice_u8 = std::slice::from_raw_parts(slice.as_ptr() as *const u8, len);
+    if unsafe { s.value.inlined.length } <= 12 {
+        let len = unsafe { s.value.inlined.length } as usize;
+        let slice = unsafe { &s.value.inlined.inlined };
+        let slice_u8 = unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, len) };
         String::from_utf8_lossy(slice_u8).into_owned()
     } else {
-        let len = s.value.pointer.length as usize;
-        let ptr = s.value.pointer.ptr;
-        let slice = std::slice::from_raw_parts(ptr as *const u8, len);
+        let len = unsafe { s.value.pointer.length } as usize;
+        let ptr = unsafe { s.value.pointer.ptr };
+        let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
         String::from_utf8_lossy(slice).into_owned()
     }
 }
@@ -137,7 +137,7 @@ impl VScalar for ChessMovesHashScalar {
         let output_slice = output_vec.as_mut_slice::<i64>();
 
         for i in 0..len {
-            let val = read_duckdb_string(input_slice[i]);
+            let val = unsafe { read_duckdb_string(input_slice[i]) };
             let normalized = normalize_movetext(&val);
             
             // Compute hash
@@ -177,8 +177,8 @@ impl VScalar for ChessMovesSubsetScalar {
         let output_slice = output_vec.as_mut_slice::<bool>();
 
         for i in 0..len {
-            let short_text = read_duckdb_string(input_slice_0[i]);
-            let long_text = read_duckdb_string(input_slice_1[i]);
+            let short_text = unsafe { read_duckdb_string(input_slice_0[i]) };
+            let long_text = unsafe { read_duckdb_string(input_slice_1[i]) };
             
             output_slice[i] = check_moves_subset(&short_text, &long_text);
         }
@@ -230,6 +230,9 @@ fn extract_moves(movetext: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chess::filter::normalize_movetext;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
 
     #[test]
     fn test_process_moves_basic() {
@@ -248,4 +251,155 @@ mod tests {
         let json = process_moves(input).unwrap();
         assert!(json.contains(r#""move":"e5""#));
     }
+
+    #[test]
+    fn test_process_moves_empty() {
+        let input = "";
+        let json = process_moves(input).unwrap();
+        assert_eq!(json, "[]");
+    }
+
+    #[test]
+    fn test_process_moves_with_result_marker() {
+        let input = "1. e4 e5 1-0";
+        let json = process_moves(input).unwrap();
+        assert!(json.contains(r#""ply":1,"move":"e4""#));
+        assert!(json.contains(r#""ply":2,"move":"e5""#));
+        // Should not contain result marker
+        assert!(!json.contains("1-0"));
+    }
+
+    #[test]
+    fn test_process_moves_with_invalid_move() {
+        let input = "1. e4 e5 INVALID";
+        let json = process_moves(input).unwrap();
+        // Should return valid prefix up to e5
+        assert!(json.contains(r#""ply":1,"move":"e4""#));
+        assert!(json.contains(r#""ply":2,"move":"e5""#));
+        // Should not include INVALID move
+        assert!(!json.contains("INVALID"));
+    }
+
+    #[test]
+    fn test_chess_moves_hash_consistency_formatting() {
+        // Test identical moves with different formatting produce same hash
+        let hash1 = compute_hash("1. e4 e5");
+        let hash2 = compute_hash("1.e4 e5");
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_chess_moves_hash_consistency_comments() {
+        // Test identical moves with comments produce same hash
+        let hash1 = compute_hash("1. e4 e5");
+        let hash2 = compute_hash("1. e4 {comment} e5");
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_chess_moves_hash_consistency_variations() {
+        // Test identical moves with variations produce same hash
+        let hash1 = compute_hash("1. e4 e5");
+        let hash2 = compute_hash("1. e4 (1. d4) e5");
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_chess_moves_hash_consistency_nags() {
+        // Test identical moves with NAGs produce same hash
+        let hash1 = compute_hash("1. e4 e5");
+        let hash2 = compute_hash("1. e4! e5?");
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_chess_moves_hash_discrimination_different_moves() {
+        // Test different moves produce different hashes
+        let hash1 = compute_hash("1. e4 e5");
+        let hash2 = compute_hash("1. d4 d5");
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_chess_moves_hash_discrimination_different_length() {
+        // Test different length sequences produce different hashes
+        let hash1 = compute_hash("1. e4");
+        let hash2 = compute_hash("1. e4 e5");
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_chess_moves_hash_empty_string() {
+        // Test hash of empty string
+        let hash = compute_hash("");
+        // Known hash value for empty string
+        assert_eq!(hash, 3476900567878811119);
+    }
+
+    // Helper function to compute hash like the scalar function does
+    fn compute_hash(movetext: &str) -> i64 {
+        let normalized = normalize_movetext(movetext);
+        let mut hasher = DefaultHasher::new();
+        normalized.hash(&mut hasher);
+        hasher.finish() as i64
+    }
+
+    #[test]
+    fn test_chess_moves_subset_exact_subset() {
+        // Test short is prefix of long
+        assert!(check_moves_subset("1. e4", "1. e4 e5"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_different_moves() {
+        // Test different moves
+        assert!(!check_moves_subset("1. d4", "1. e4 e5"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_same_game() {
+        // Test identical sequences
+        assert!(check_moves_subset("1. e4 e5", "1. e4 e5"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_short_longer_than_long() {
+        // Test short is longer than long
+        assert!(!check_moves_subset("1. e4 e5 2. Nf3", "1. e4"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_with_annotations() {
+        // Test subset with annotations ignored
+        assert!(check_moves_subset("1. e4 {comment} e5", "1. e4 e5 2. Nf3"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_with_variations() {
+        // Test subset with variations ignored
+        assert!(check_moves_subset("1. e4 (1. d4) e5", "1. e4 e5 2. Nf3"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_with_nags() {
+        // Test subset with NAGs ignored
+        assert!(check_moves_subset("1. e4! e5?", "1. e4 e5 2. Nf3"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_empty_cases() {
+        // Test empty string cases
+        assert!(check_moves_subset("", "1. e4"));
+        assert!(!check_moves_subset("1. e4", ""));
+        assert!(check_moves_subset("", ""));
+    }
+
+
+
+
+
+
+
+
+
 }

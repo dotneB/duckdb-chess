@@ -1,6 +1,15 @@
+# Rust build artifacts
 /target
+
+# DuckDB extension binaries
+*.duckdb_extension
+
+# Old build artifacts (legacy Make-based)
 build
 configure
+venv
+
+# IDE
 .idea
 
 # Agent Commands
@@ -9,6 +18,5 @@ configure
 # Test artifacts
 duckdb_unittest_tempdir
 /test/bin
-venv
 *.duckdb
 *.csv

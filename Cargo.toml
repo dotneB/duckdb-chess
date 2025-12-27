@@ -1,7 +1,7 @@
 [package]
 name = "duckdb_chess"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib"]
@@ -10,15 +10,10 @@ crate-type = ["cdylib"]
 lto = true
 strip = true
 
-[[example]]
-name = "duckdb_chess"
-path = "src/wasm_lib.rs"
-crate-type = ["staticlib"]
-
 [dependencies]
-duckdb = { version = "=1.4.3", features = ["vtab-loadable"] }
-duckdb-loadable-macros = "=0.1.13"
-libduckdb-sys = { version = "=1.4.3", features = ["loadable-extension"] }
+duckdb = { version = "1.4.3", features = ["vtab-loadable", "vscalar"] }
+duckdb-ext-macros = "0.1.0"
+libduckdb-sys = { version = "1.4.3", features = ["loadable-extension"] }
 pgn-reader = "0.28"
 shakmaty = "0.29"
 uuid = { version = "1", features = ["v4"] }

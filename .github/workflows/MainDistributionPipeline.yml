@@ -1,7 +1,9 @@
 #
-# This workflow calls the main distribution pipeline from DuckDB to build, test and (optionally) release the extension
+# Cargo-based build pipeline for DuckDB Chess Extension
+# Uses modern Rust tooling with cargo-duckdb-ext-tools
 #
-name: Main Extension Distribution Pipeline
+name: Build and Test Extension
+
 on:
   push:
     branches: [main]
@@ -12,13 +14,127 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
   cancel-in-progress: true
 
+env:
+  EXTENSION_NAME: duckdb_chess
+
 jobs:
-  duckdb-stable-build:
-    name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
-    with:
-      duckdb_version: v1.4.3
-      ci_tools_version: main
-      extension_name: rusty_quack
-      extra_toolchains: rust;python3
-      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;linux_amd64_musl'
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux_amd64
+          
+          # Linux ARM64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            platform: linux_arm64
+          
+          # macOS x86_64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            platform: osx_amd64
+          
+          # macOS ARM64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: osx_arm64
+          
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows_amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-duckdb-ext-tools
+        run: cargo install cargo-duckdb-ext-tools
+
+      # Cross-compilation setup for Linux ARM64
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Build extension
+        run: cargo duckdb-ext-build -- --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EXTENSION_NAME }}-${{ matrix.platform }}
+          path: |
+            target/${{ matrix.target }}/release/*.duckdb_extension
+            target/${{ matrix.target }}/release/${{ env.EXTENSION_NAME }}.duckdb_extension
+          if-no-files-found: error
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-duckdb-ext-tools
+        run: cargo install cargo-duckdb-ext-tools
+
+      - name: Install DuckDB CLI
+        run: |
+          wget https://github.com/duckdb/duckdb/releases/download/v1.4.3/duckdb_cli-linux-amd64.zip
+          unzip duckdb_cli-linux-amd64.zip
+          chmod +x duckdb
+          sudo mv duckdb /usr/local/bin/
+
+      - name: Build extension (debug)
+        run: cargo duckdb-ext-build
+
+      - name: Run Rust tests
+        run: cargo test
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.EXTENSION_NAME }}-linux_amd64
+
+      - name: Test extension loads in DuckDB
+        run: |
+          EXT_PATH=$(find . -name "*.duckdb_extension" | head -n 1)
+          echo "Testing extension: $EXT_PATH"
+          duckdb -unsigned -c "LOAD '$EXT_PATH'; SELECT * FROM duckdb_extensions() WHERE extension_name = '${{ env.EXTENSION_NAME }}';"
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings

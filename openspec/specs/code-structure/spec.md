@@ -42,6 +42,14 @@ Given the `extension_entrypoint` function
 It must remain in `src/lib.rs`
 And `src/lib.rs` must declare the sub-modules
 
+### Requirement: Extension Entry Point Macro
+The project MUST use the modern `#[duckdb_extension]` macro for the extension entry point.
+
+#### Scenario: Modern macro usage
+Given the `extension_entrypoint` function
+It must use `#[duckdb_extension(name = "duckdb_chess", api_version = "v1.0.0")]` macro
+And it must not use the legacy `#[duckdb_entrypoint_c_api]` macro
+
 ### Requirement: Unit Test Support
 The project MUST support unit testing for core logic modules to ensure reliability and facilitate refactoring.
 

@@ -1,116 +1,247 @@
-# DuckDB Rust extension template
-This is an **experimental** template for Rust based extensions based on the C Extension API of DuckDB. The goal is to
-turn this eventually into a stable basis for pure-Rust DuckDB extensions that can be submitted to the Community extensions
-repository
+# DuckDB Chess Extension
 
-Features:
-- No DuckDB build required
-- No C++ or C code required
-- CI/CD chain preconfigured
-- (Coming soon) Works with community extensions
+A DuckDB extension for parsing and analyzing chess games in PGN format. This extension provides SQL-based access to chess game data, compatible with the Lichess database schema.
 
-## Cloning
+## Features
 
-Clone the repo with submodules
+- **Parse PGN files**: Read chess games from PGN files with `read_pgn()`
+- **Query chess data**: Filter games by opening, player, rating, time control, etc.
+- **Movetext manipulation**: Normalize, hash, and extract move sequences
+- **Glob pattern support**: Process multiple PGN files at once
+- **Lichess compatibility**: Schema matches Lichess database exports
 
+## Quick Start
+
+### Prerequisites
+
+- **Rust toolchain** (1.88.0 or newer): Install from [rustup.rs](https://rustup.rs/)
+- **cargo-duckdb-ext-tools**: `cargo install cargo-duckdb-ext-tools`
+- **DuckDB** (1.4.3+): For testing the extension
+
+That's it! No Python, Make, or other dependencies required.
+
+### Building
+
+#### Debug Build
 ```shell
-git clone --recurse-submodules <repo>
+cargo duckdb-ext-build
 ```
 
-## Dependencies
-In principle, these extensions can be compiled with the Rust toolchain alone. However, this template relies on some additional
-tooling to make life a little easier and to be able to share CI/CD infrastructure with extension templates for other languages:
+This will:
+1. Compile the extension with `cargo build`
+2. Append DuckDB metadata to create `target/debug/duckdb_chess.duckdb_extension`
 
-- Python3
-- Python3-venv
-- [Make](https://www.gnu.org/software/make)
-- Git
-
-Installing these dependencies will vary per platform:
-- For Linux, these come generally pre-installed or are available through the distro-specific package manager.
-- For MacOS, [homebrew](https://formulae.brew.sh/).
-- For Windows, [chocolatey](https://community.chocolatey.org/).
-
-## Building
-After installing the dependencies, building is a two-step process. Firstly run:
+#### Release Build
 ```shell
-make configure
+cargo duckdb-ext-build -- --release
 ```
-This will ensure a Python venv is set up with DuckDB and DuckDB's test runner installed. Additionally, depending on configuration,
-DuckDB will be used to determine the correct platform for which you are compiling.
 
-Then, to build the extension run:
+Or use the convenient Makefile wrapper:
 ```shell
-make debug
+make release
 ```
-This delegates the build process to cargo, which will produce a shared library in `target/debug/<shared_lib_name>`. After this step,
-a script is run to transform the shared library into a loadable extension by appending a binary footer. The resulting extension is written
-to the `build/debug` directory.
 
-To create optimized release binaries, simply run `make release` instead.
+The extension will be created at `target/release/duckdb_chess.duckdb_extension`.
 
-### Running the extension
-To run the extension code, start `duckdb` with `-unsigned` flag. This will allow you to load the local extension file.
+#### Manual Packaging (Advanced)
 
-```sh
+If you need explicit control over extension metadata:
+
+```shell
+# Build the library
+cargo build --release
+
+# Package with specific parameters
+cargo duckdb-ext-pack \
+  -i target/release/duckdb_chess.dll \
+  -o target/release/duckdb_chess.duckdb_extension \
+  -v v0.1.0 \
+  -p windows_amd64 \
+  -d v1.4.3
+```
+
+### Loading the Extension
+
+Start DuckDB with the `-unsigned` flag to load local extensions:
+
+```shell
 duckdb -unsigned
 ```
 
-After loading the extension by the file path, you can use the functions provided by the extension (in this case, `rusty_quack()`).
+Then load the extension:
 
 ```sql
-LOAD './build/debug/extension/rusty_quack/rusty_quack.duckdb_extension';
-SELECT * FROM rusty_quack('Jane');
+LOAD './target/release/duckdb_chess.duckdb_extension';
 ```
 
-```
-┌─────────────────────┐
-│       column0       │
-│       varchar       │
-├─────────────────────┤
-│ Rusty Quack Jane 🐥 │
-└─────────────────────┘
+### Example Usage
+
+```sql
+-- Load the extension
+LOAD './target/release/duckdb_chess.duckdb_extension';
+
+-- Read a PGN file
+SELECT * FROM read_pgn('games.pgn') LIMIT 5;
+
+-- Read multiple PGN files with glob pattern
+SELECT COUNT(*) FROM read_pgn('lichess_db_*.pgn');
+
+-- Filter by opening
+SELECT Event, White, Black, Result 
+FROM read_pgn('games.pgn')
+WHERE Opening LIKE '%Sicilian%';
+
+-- Normalize movetext (remove annotations)
+SELECT chess_moves_normalize('1. e4 e5 2. Nf3 {A comment} Nc6') AS clean_moves;
+-- Result: "e4 e5 Nf3 Nc6"
+
+-- Hash movetext for deduplication
+SELECT chess_moves_hash('e4 e5 Nf3 Nc6');
+
+-- Convert to JSON
+SELECT chess_moves_json('e4 e5 Nf3 Nc6');
+
+-- Extract move subset
+SELECT chess_moves_subset('e4 e5 Nf3 Nc6 Bb5', 3); -- First 3 moves
 ```
 
 ## Testing
-This extension uses the DuckDB Python client for testing. This should be automatically installed in the `make configure` step.
-The tests themselves are written in the SQLLogicTest format, just like most of DuckDB's tests. A sample test can be found in
-`test/sql/<extension_name>.test`. To run the tests using the *debug* build:
+
+### Rust Unit Tests
 
 ```shell
-make test_debug
+cargo test
 ```
 
-or for the *release* build:
+This runs 20 unit tests covering the core chess parsing and filtering logic.
+
+### Manual Testing
+
+Build the extension and test it manually with DuckDB:
+
 ```shell
-make test_release
+# Build the extension
+cargo duckdb-ext-build -- --release
+
+# Test with DuckDB CLI
+duckdb -unsigned
 ```
 
-### Version switching
-Testing with different DuckDB versions is really simple:
-
-First, run
-```
-make clean_all
-```
-to ensure the previous `make configure` step is deleted.
-
-Then, run
-```
-DUCKDB_TEST_VERSION=v1.3.2 make configure
-```
-to select a different duckdb version to test with
-
-Finally, build and test with
-```
-make debug
-make test_debug
+Then in DuckDB:
+```sql
+LOAD './target/release/duckdb_chess.duckdb_extension';
+SELECT * FROM read_pgn('test/pgn_files/sample.pgn') LIMIT 5;
+SELECT chess_moves_normalize('1. e4 e5 2. Nf3 {comment} Nc6');
 ```
 
-### Known issues
-This is a bit of a footgun, but the extensions produced by this template may (or may not) be broken on windows on python3.11
-with the following error on extension load:
+Test PGN files are available in `test/pgn_files/`.
+
+## Development
+
+### Project Structure
+
+```
+src/
+├── chess/
+│   ├── mod.rs          # Extension entry point
+│   ├── reader.rs       # read_pgn() table function
+│   ├── visitor.rs      # PGN parsing logic
+│   ├── moves.rs        # Movetext functions (hash, JSON, subset)
+│   ├── filter.rs       # chess_moves_normalize() function
+│   └── types.rs        # Shared types
+├── lib.rs              # Crate root
+└── wasm_lib.rs         # WASM target (experimental)
+```
+
+### Available Make Targets
+
+The Makefile provides convenient wrappers around cargo commands:
+
 ```shell
-IO Error: Extension '<name>.duckdb_extension' could not be loaded: The specified module could not be found
+make build          # Build debug extension
+make release        # Build release extension
+make test           # Run Rust unit tests
+make clean          # Clean build artifacts
+make install-tools  # Install cargo-duckdb-ext-tools
+make help           # Show all available targets
 ```
-This was resolved by using python 3.12
+
+### Direct Cargo Commands
+
+You can also use cargo directly:
+
+```shell
+cargo duckdb-ext-build                    # Debug build
+cargo duckdb-ext-build -- --release       # Release build
+cargo test                                # Run tests
+cargo clean                               # Clean artifacts
+```
+
+## Version Compatibility
+
+This extension is built for **DuckDB 1.4.3**. The extension includes version metadata and should work with DuckDB 1.4.3.
+
+**Note**: The old template used `USE_UNSTABLE_C_API=1` which required exact version matching. The modern build system aims for better compatibility, but version matching may still be required depending on DuckDB API changes.
+
+## Functions Reference
+
+### Table Functions
+
+#### `read_pgn(path_pattern: VARCHAR)`
+
+Reads chess games from PGN files and returns a table with the Lichess schema.
+
+**Columns**: Event, Site, White, Black, Result, WhiteElo, BlackElo, WhiteRatingDiff, BlackRatingDiff, ECO, Opening, TimeControl, Termination, UTCDate, UTCTime, moves
+
+**Example**:
+```sql
+SELECT * FROM read_pgn('games.pgn');
+SELECT * FROM read_pgn('lichess_db_2024-*.pgn'); -- Glob pattern
+```
+
+### Scalar Functions
+
+#### `chess_moves_normalize(movetext: VARCHAR) -> VARCHAR`
+
+Removes annotations, comments, variations, and numeric glyphs from movetext, returning a clean move sequence.
+
+#### `chess_moves_hash(movetext: VARCHAR) -> VARCHAR`
+
+Computes a hash of the normalized move sequence for deduplication.
+
+#### `chess_moves_json(movetext: VARCHAR) -> JSON`
+
+Converts movetext to JSON array format.
+
+#### `chess_moves_subset(movetext: VARCHAR, count: INTEGER) -> VARCHAR`
+
+Extracts the first `count` moves from the movetext.
+
+## Architecture
+
+This extension uses:
+- **Rust 2024 Edition** for modern language features
+- **duckdb-ext-macros** (0.1.0) for extension macros
+- **cargo-duckdb-ext-tools** for packaging
+- **pgn-reader** (0.28) for PGN parsing
+- **shakmaty** (0.29) for chess logic
+
+The build system is pure Rust with no Python or Make dependencies required for building (though the Makefile is provided for convenience).
+
+## Contributing
+
+1. Make changes to the source code
+2. Run tests: `cargo test`
+3. Build the extension: `cargo duckdb-ext-build -- --release`
+4. Test manually with DuckDB CLI
+
+## License
+
+See LICENSE file for details.
+
+## Acknowledgments
+
+- Built on DuckDB's extension framework
+- Uses the modern [duckdb-ext-rs-template](https://github.com/redraiment/duckdb-ext-rs-template) by [@redraiment](https://github.com/redraiment)
+- PGN parsing by [pgn-reader](https://github.com/niklasf/pgn-reader)
+- Chess logic by [shakmaty](https://github.com/niklasf/shakmaty)
