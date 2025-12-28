@@ -1,11 +1,11 @@
 use duckdb::{
+    Result,
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     vscalar::{ScalarFunctionSignature, VScalar},
     vtab::arrow::WritableVector,
-    Result,
 };
 use libduckdb_sys::duckdb_string_t;
-use shakmaty::{Chess, Position, san::SanPlus, EnPassantMode};
+use shakmaty::{Chess, EnPassantMode, Position, san::SanPlus};
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::CString;
@@ -57,9 +57,9 @@ fn process_moves(movetext: &str) -> Result<String, Box<dyn Error>> {
     let clean_text = normalize_movetext(movetext);
     let mut pos = Chess::default();
     let mut json = String::new();
-    
+
     json.push('[');
-    
+
     let mut first = true;
     let mut ply = 0;
 
@@ -89,8 +89,12 @@ fn process_moves(movetext: &str) -> Result<String, Box<dyn Error>> {
         first = false;
 
         let fen = duckdb_fen(&pos);
-        
-        write!(json, r#"{{"ply":{},"move":"{}","fen":"{}"}}"#, ply, token, fen)?;
+
+        write!(
+            json,
+            r#"{{"ply":{},"move":"{}","fen":"{}"}}"#,
+            ply, token, fen
+        )?;
     }
 
     json.push(']');
@@ -99,7 +103,7 @@ fn process_moves(movetext: &str) -> Result<String, Box<dyn Error>> {
 
 fn duckdb_fen(pos: &Chess) -> String {
     use shakmaty::fen::Fen;
-    
+
     let fen = Fen::from_position(pos, EnPassantMode::Legal);
     fen.to_string()
 }
@@ -139,7 +143,7 @@ impl VScalar for ChessMovesHashScalar {
         for i in 0..len {
             let val = unsafe { read_duckdb_string(input_slice[i]) };
             let normalized = normalize_movetext(&val);
-            
+
             // Compute hash
             let mut hasher = DefaultHasher::new();
             normalized.hash(&mut hasher);
@@ -179,7 +183,7 @@ impl VScalar for ChessMovesSubsetScalar {
         for i in 0..len {
             let short_text = unsafe { read_duckdb_string(input_slice_0[i]) };
             let long_text = unsafe { read_duckdb_string(input_slice_1[i]) };
-            
+
             output_slice[i] = check_moves_subset(&short_text, &long_text);
         }
         Ok(())
@@ -199,17 +203,18 @@ impl VScalar for ChessMovesSubsetScalar {
 fn check_moves_subset(short_movetext: &str, long_movetext: &str) -> bool {
     let short_normalized = normalize_movetext(short_movetext);
     let long_normalized = normalize_movetext(long_movetext);
-    
+
     // Extract just the moves (without move numbers)
     let short_moves = extract_moves(&short_normalized);
     let long_moves = extract_moves(&long_normalized);
-    
+
     // Check if short is a prefix of long
     if short_moves.len() > long_moves.len() {
         return false;
     }
-    
-    short_moves.iter()
+
+    short_moves
+        .iter()
         .zip(long_moves.iter())
         .all(|(s, l)| s == l)
 }
@@ -393,13 +398,4 @@ mod tests {
         assert!(!check_moves_subset("1. e4", ""));
         assert!(check_moves_subset("", ""));
     }
-
-
-
-
-
-
-
-
-
 }

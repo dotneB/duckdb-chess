@@ -45,8 +45,12 @@ impl GameVisitor {
             black_title: self.get_header("BlackTitle"),
             white_elo: self.get_header("WhiteElo").and_then(|s| parse_elo(&s)),
             black_elo: self.get_header("BlackElo").and_then(|s| parse_elo(&s)),
-            utc_date: self.get_header("UTCDate").or_else(|| self.get_header("Date")),
-            utc_time: self.get_header("UTCTime").or_else(|| self.get_header("Time")),
+            utc_date: self
+                .get_header("UTCDate")
+                .or_else(|| self.get_header("Date")),
+            utc_time: self
+                .get_header("UTCTime")
+                .or_else(|| self.get_header("Time")),
             eco: self.get_header("ECO"),
             opening: self.get_header("Opening"),
             termination: self.get_header("Termination"),
@@ -71,8 +75,12 @@ impl GameVisitor {
             black_title: self.get_header("BlackTitle"),
             white_elo: self.get_header("WhiteElo").and_then(|s| parse_elo(&s)),
             black_elo: self.get_header("BlackElo").and_then(|s| parse_elo(&s)),
-            utc_date: self.get_header("UTCDate").or_else(|| self.get_header("Date")),
-            utc_time: self.get_header("UTCTime").or_else(|| self.get_header("Time")),
+            utc_date: self
+                .get_header("UTCDate")
+                .or_else(|| self.get_header("Date")),
+            utc_time: self
+                .get_header("UTCTime")
+                .or_else(|| self.get_header("Time")),
             eco: self.get_header("ECO"),
             opening: self.get_header("Opening"),
             termination: self.get_header("Termination"),

@@ -4,14 +4,14 @@ use duckdb::{
     vtab::arrow::WritableVector,
 };
 use libduckdb_sys::duckdb_string_t;
-use std::ffi::CString;
 use std::error::Error;
+use std::ffi::CString;
 
 /// Removes curly brace annotations from chess movetext while preserving move structure
 /// Spec: annotation-filtering - Movetext Annotation Removal
 /// Spec: annotation-filtering - Nested Annotation Handling (tracks brace depth)
 /// Spec: annotation-filtering - Whitespace Normalization (collapses spaces and trims)
-/// 
+///
 /// Note: This function preserves move numbers. For a canonical representation without
 /// move numbers, use normalize_movetext() or the chess_moves_normalize SQL function.
 pub fn filter_movetext_annotations(movetext: &str) -> String {
@@ -57,7 +57,7 @@ pub fn filter_movetext_annotations(movetext: &str) -> String {
 pub fn normalize_movetext(movetext: &str) -> String {
     // Preprocess: add space after move numbers like "1.e4" -> "1. e4"
     let preprocessed = preprocess_move_numbers(movetext);
-    
+
     let mut result = String::new();
     let mut in_comment = false;
     let mut in_variation = false;
@@ -143,10 +143,10 @@ pub fn preprocess_move_numbers(movetext: &str) -> String {
     let mut result = String::new();
     let mut chars = movetext.chars().peekable();
     let mut in_number = false;
-    
+
     while let Some(ch) = chars.next() {
         result.push(ch);
-        
+
         // Track if we're in a move number (digits followed by .)
         if ch.is_ascii_digit() {
             in_number = true;
@@ -163,7 +163,7 @@ pub fn preprocess_move_numbers(movetext: &str) -> String {
             in_number = false;
         }
     }
-    
+
     result
 }
 
@@ -172,7 +172,7 @@ pub fn preprocess_move_numbers(movetext: &str) -> String {
 fn strip_nags(token: &str) -> String {
     let mut result = String::new();
     let mut chars = token.chars().peekable();
-    
+
     while let Some(ch) = chars.next() {
         match ch {
             '$' => {
@@ -191,7 +191,7 @@ fn strip_nags(token: &str) -> String {
             _ => result.push(ch),
         }
     }
-    
+
     result
 }
 
@@ -320,8 +320,6 @@ mod tests {
         assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
     }
 
-
-
     #[test]
     fn test_normalize_complex() {
         let input = "1. e4! {Best by test} (1. d4 d5) e5?? $1 2. Nf3";
@@ -340,8 +338,6 @@ mod tests {
         assert_eq!(normalize_movetext("1. e4$10"), "e4");
     }
 
-
-
     #[test]
     fn test_normalize_empty() {
         assert_eq!(normalize_movetext(""), "");
@@ -359,8 +355,14 @@ mod tests {
 
     #[test]
     fn test_normalize_with_different_spacing() {
-        assert_eq!(normalize_movetext("1. e4 e5"), normalize_movetext("1.e4 e5"));
-        assert_eq!(normalize_movetext("1. e4 e5"), normalize_movetext("1.  e4  e5"));
+        assert_eq!(
+            normalize_movetext("1. e4 e5"),
+            normalize_movetext("1.e4 e5")
+        );
+        assert_eq!(
+            normalize_movetext("1. e4 e5"),
+            normalize_movetext("1.  e4  e5")
+        );
     }
 
     // Tests from SQL test files
@@ -462,8 +464,6 @@ mod tests {
 
     // Additional edge case tests
 
-
-
     #[test]
     fn test_normalize_deeply_nested_variations() {
         let input = "1. e4 ((1. d4 (1. c4)) e5";
@@ -510,8 +510,10 @@ mod tests {
 
     #[test]
     fn test_normalize_complex_move_notation() {
-        assert_eq!(normalize_movetext("1. e4 e5 2. Nf3+ Nc6 3. Bb5 a6 4. Ba4 Nf6"), 
-                  "e4 e5 Nf3+ Nc6 Bb5 a6 Ba4 Nf6");
+        assert_eq!(
+            normalize_movetext("1. e4 e5 2. Nf3+ Nc6 3. Bb5 a6 4. Ba4 Nf6"),
+            "e4 e5 Nf3+ Nc6 Bb5 a6 Ba4 Nf6"
+        );
     }
 
     #[test]

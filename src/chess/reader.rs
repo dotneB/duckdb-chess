@@ -48,21 +48,36 @@ impl VTab for ReadPgnVTab {
         bind.add_result_column("White", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("Black", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("Result", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("WhiteTitle", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("BlackTitle", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+        bind.add_result_column(
+            "WhiteTitle",
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        );
+        bind.add_result_column(
+            "BlackTitle",
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        );
         bind.add_result_column("WhiteElo", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("BlackElo", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("UTCDate", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("UTCTime", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("ECO", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("Opening", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("Termination", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("TimeControl", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+        bind.add_result_column(
+            "Termination",
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        );
+        bind.add_result_column(
+            "TimeControl",
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        );
         bind.add_result_column("movetext", LogicalTypeHandle::from(LogicalTypeId::Varchar));
 
         // Spec: data-schema - Parse Error Column
         // 17th column: diagnostic information about parsing failures (VARCHAR, nullable)
-        bind.add_result_column("parse_error", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+        bind.add_result_column(
+            "parse_error",
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        );
 
         Ok(ReadPgnBindData { paths })
     }
@@ -170,7 +185,7 @@ impl VTab for ReadPgnVTab {
 
                                     // Reset visitor for new game
                                     let _ = reader.visitor.begin_tags(); // Manually clear (although read_game calls it)
-                                                                 // Actually read_game calls begin_tags.
+                                    // Actually read_game calls begin_tags.
 
                                     // We need to handle the fact that visitor state is persistent in PgnReaderState
                                     // read_game calls visitor methods.
@@ -193,58 +208,71 @@ impl VTab for ReadPgnVTab {
                                             if let Some(game) = reader.visitor.current_game.take() {
                                                 reader.record_buffer = game;
                                                 game_found = true;
-        }
-    }
-}
+                                            }
+                                        }
+                                    }
 
-#[cfg(test)]
-#[allow(dead_code)]
-mod tests {
-    use super::*;
-    
-    use std::path::PathBuf;
+                                    #[cfg(test)]
+                                    #[allow(dead_code)]
+                                    mod tests {
+                                        use super::*;
 
-    #[test]
-    fn test_read_pgn_bind_data_creation() {
-        // Test that bind data can be created with single file
-        let paths = vec![PathBuf::from("test.pgn")];
-        let bind_data = ReadPgnBindData { paths };
-        assert_eq!(bind_data.paths.len(), 1);
-        assert_eq!(bind_data.paths[0], PathBuf::from("test.pgn"));
-    }
+                                        use std::path::PathBuf;
 
-    #[test]
-    fn test_read_pgn_bind_data_multiple_files() {
-        // Test that bind data can be created with multiple files
-        let paths = vec![
-            PathBuf::from("test1.pgn"),
-            PathBuf::from("test2.pgn"),
-        ];
-        let bind_data = ReadPgnBindData { paths };
-        assert_eq!(bind_data.paths.len(), 2);
-    }
+                                        #[test]
+                                        fn test_read_pgn_bind_data_creation() {
+                                            // Test that bind data can be created with single file
+                                            let paths = vec![PathBuf::from("test.pgn")];
+                                            let bind_data = ReadPgnBindData { paths };
+                                            assert_eq!(bind_data.paths.len(), 1);
+                                            assert_eq!(
+                                                bind_data.paths[0],
+                                                PathBuf::from("test.pgn")
+                                            );
+                                        }
 
-    #[test]
-    fn test_shared_state_initialization() {
-        // Test that shared state can be initialized
-        let state = SharedState {
-            next_path_idx: 0,
-            available_readers: Vec::new(),
-        };
-        let init_data = ReadPgnInitData {
-            state: Mutex::new(state),
-        };
-        assert_eq!(init_data.state.lock().unwrap().next_path_idx, 0);
-        assert!(init_data.state.lock().unwrap().available_readers.is_empty());
-    }
+                                        #[test]
+                                        fn test_read_pgn_bind_data_multiple_files() {
+                                            // Test that bind data can be created with multiple files
+                                            let paths = vec![
+                                                PathBuf::from("test1.pgn"),
+                                                PathBuf::from("test2.pgn"),
+                                            ];
+                                            let bind_data = ReadPgnBindData { paths };
+                                            assert_eq!(bind_data.paths.len(), 2);
+                                        }
 
-    // Test with actual PGN file content parsing
-    #[test]
-    fn test_pgn_visitor_basic_game() {
-        use pgn_reader::Reader;
-        use crate::chess::visitor::GameVisitor;
+                                        #[test]
+                                        fn test_shared_state_initialization() {
+                                            // Test that shared state can be initialized
+                                            let state = SharedState {
+                                                next_path_idx: 0,
+                                                available_readers: Vec::new(),
+                                            };
+                                            let init_data = ReadPgnInitData {
+                                                state: Mutex::new(state),
+                                            };
+                                            assert_eq!(
+                                                init_data.state.lock().unwrap().next_path_idx,
+                                                0
+                                            );
+                                            assert!(
+                                                init_data
+                                                    .state
+                                                    .lock()
+                                                    .unwrap()
+                                                    .available_readers
+                                                    .is_empty()
+                                            );
+                                        }
 
-        let pgn_content = r#"
+                                        // Test with actual PGN file content parsing
+                                        #[test]
+                                        fn test_pgn_visitor_basic_game() {
+                                            use crate::chess::visitor::GameVisitor;
+                                            use pgn_reader::Reader;
+
+                                            let pgn_content = r#"
 [Event "Test Game"]
 [Site "Test Site"]
 [White "Player 1"]
@@ -254,29 +282,29 @@ mod tests {
 1. e4 e5 2. Nf3 Nc6 1-0
 "#;
 
-        let mut visitor = GameVisitor::new();
-        let mut reader = Reader::new(pgn_content.as_bytes());
-        
-        let result = reader.read_game(&mut visitor);
-        assert!(result.is_ok());
-        
-        let game = visitor.current_game.take();
-        assert!(game.is_some());
-        
-        let game = game.unwrap();
-        assert_eq!(game.event.as_deref().unwrap(), "Test Game");
-        assert_eq!(game.white.as_deref().unwrap(), "Player 1");
-        assert_eq!(game.black.as_deref().unwrap(), "Player 2");
-        assert_eq!(game.result.as_deref().unwrap(), "1-0");
-        assert_eq!(game.site.as_deref().unwrap(), "Test Site");
-    }
+                                            let mut visitor = GameVisitor::new();
+                                            let mut reader = Reader::new(pgn_content.as_bytes());
 
-    #[test]
-    fn test_pgn_visitor_missing_headers() {
-        use pgn_reader::Reader;
-        use crate::chess::visitor::GameVisitor;
+                                            let result = reader.read_game(&mut visitor);
+                                            assert!(result.is_ok());
 
-        let pgn_content = r#"
+                                            let game = visitor.current_game.take();
+                                            assert!(game.is_some());
+
+                                            let game = game.unwrap();
+                                            assert_eq!(game.event.as_deref().unwrap(), "Test Game");
+                                            assert_eq!(game.white.as_deref().unwrap(), "Player 1");
+                                            assert_eq!(game.black.as_deref().unwrap(), "Player 2");
+                                            assert_eq!(game.result.as_deref().unwrap(), "1-0");
+                                            assert_eq!(game.site.as_deref().unwrap(), "Test Site");
+                                        }
+
+                                        #[test]
+                                        fn test_pgn_visitor_missing_headers() {
+                                            use crate::chess::visitor::GameVisitor;
+                                            use pgn_reader::Reader;
+
+                                            let pgn_content = r#"
 [Event "Minimal Game"]
 [White "?"]
 [Black "?"]
@@ -285,33 +313,36 @@ mod tests {
 1. d4 d5 *
 "#;
 
-        let mut visitor = GameVisitor::new();
-        let mut reader = Reader::new(pgn_content.as_bytes());
-        
-        let result = reader.read_game(&mut visitor);
-        assert!(result.is_ok());
-        
-        let game = visitor.current_game.take();
-        assert!(game.is_some());
-        
-        let game = game.unwrap();
-        assert_eq!(game.event.as_deref().unwrap(), "Minimal Game");
-        assert_eq!(game.white.as_deref().unwrap(), "?");
-        assert_eq!(game.black.as_deref().unwrap(), "?");
-        assert_eq!(game.result.as_deref().unwrap(), "*");
-        
-        // Missing headers should be None
-        assert_eq!(game.site, None);
-        assert_eq!(game.eco, None);
-        assert_eq!(game.opening, None);
-    }
+                                            let mut visitor = GameVisitor::new();
+                                            let mut reader = Reader::new(pgn_content.as_bytes());
 
-    #[test]
-    fn test_pgn_visitor_partial_headers() {
-        use pgn_reader::Reader;
-        use crate::chess::visitor::GameVisitor;
+                                            let result = reader.read_game(&mut visitor);
+                                            assert!(result.is_ok());
 
-        let pgn_content = r#"
+                                            let game = visitor.current_game.take();
+                                            assert!(game.is_some());
+
+                                            let game = game.unwrap();
+                                            assert_eq!(
+                                                game.event.as_deref().unwrap(),
+                                                "Minimal Game"
+                                            );
+                                            assert_eq!(game.white.as_deref().unwrap(), "?");
+                                            assert_eq!(game.black.as_deref().unwrap(), "?");
+                                            assert_eq!(game.result.as_deref().unwrap(), "*");
+
+                                            // Missing headers should be None
+                                            assert_eq!(game.site, None);
+                                            assert_eq!(game.eco, None);
+                                            assert_eq!(game.opening, None);
+                                        }
+
+                                        #[test]
+                                        fn test_pgn_visitor_partial_headers() {
+                                            use crate::chess::visitor::GameVisitor;
+                                            use pgn_reader::Reader;
+
+                                            let pgn_content = r#"
 [Event "Game with some missing fields"]
 [White "White Player"]
 [Black "Black Player"]
@@ -320,36 +351,45 @@ mod tests {
 1. e4 e5 1/2-1/2
 "#;
 
-        let mut visitor = GameVisitor::new();
-        let mut reader = Reader::new(pgn_content.as_bytes());
-        
-        let result = reader.read_game(&mut visitor);
-        assert!(result.is_ok());
-        
-        let game = visitor.current_game.take();
-        assert!(game.is_some());
-        
-        let game = game.unwrap();
-        assert_eq!(game.event.as_deref().unwrap(), "Game with some missing fields");
-        assert_eq!(game.white.as_deref().unwrap(), "White Player");
-        assert_eq!(game.black.as_deref().unwrap(), "Black Player");
-        assert_eq!(game.result.as_deref().unwrap(), "1/2-1/2");
-        
-        // Missing headers should be None
-        assert_eq!(game.site, None);
-        assert_eq!(game.utc_date, None);
-        assert_eq!(game.eco, None);
-        assert_eq!(game.opening, None);
-        assert_eq!(game.white_elo, None);
-        assert_eq!(game.black_elo, None);
-    }
+                                            let mut visitor = GameVisitor::new();
+                                            let mut reader = Reader::new(pgn_content.as_bytes());
 
-    #[test]
-    fn test_pgn_visitor_all_headers() {
-        use pgn_reader::Reader;
-        use crate::chess::visitor::GameVisitor;
+                                            let result = reader.read_game(&mut visitor);
+                                            assert!(result.is_ok());
 
-        let pgn_content = r#"
+                                            let game = visitor.current_game.take();
+                                            assert!(game.is_some());
+
+                                            let game = game.unwrap();
+                                            assert_eq!(
+                                                game.event.as_deref().unwrap(),
+                                                "Game with some missing fields"
+                                            );
+                                            assert_eq!(
+                                                game.white.as_deref().unwrap(),
+                                                "White Player"
+                                            );
+                                            assert_eq!(
+                                                game.black.as_deref().unwrap(),
+                                                "Black Player"
+                                            );
+                                            assert_eq!(game.result.as_deref().unwrap(), "1/2-1/2");
+
+                                            // Missing headers should be None
+                                            assert_eq!(game.site, None);
+                                            assert_eq!(game.utc_date, None);
+                                            assert_eq!(game.eco, None);
+                                            assert_eq!(game.opening, None);
+                                            assert_eq!(game.white_elo, None);
+                                            assert_eq!(game.black_elo, None);
+                                        }
+
+                                        #[test]
+                                        fn test_pgn_visitor_all_headers() {
+                                            use crate::chess::visitor::GameVisitor;
+                                            use pgn_reader::Reader;
+
+                                            let pgn_content = r#"
 [Event "Test with all headers"]
 [Site "https://example.com"]
 [Date "2024.01.01"]
@@ -371,40 +411,61 @@ mod tests {
 1. e4 e5 2. Nf3 Nc6 1-0
 "#;
 
-        let mut visitor = GameVisitor::new();
-        let mut reader = Reader::new(pgn_content.as_bytes());
-        
-        let result = reader.read_game(&mut visitor);
-        assert!(result.is_ok());
-        
-        let game = visitor.current_game.take();
-        assert!(game.is_some());
-        
-        let game = game.unwrap();
-        assert_eq!(game.event.as_deref().unwrap(), "Test with all headers");
-        assert_eq!(game.site.as_deref().unwrap(), "https://example.com");
-        // Note: Date header is mapped to utc_date in GameRecord
-        assert_eq!(game.white.as_deref().unwrap(), "Player A");
-        assert_eq!(game.black.as_deref().unwrap(), "Player B");
-        assert_eq!(game.result.as_deref().unwrap(), "1-0");
-        assert_eq!(game.white_elo.unwrap(), 2000);
-        assert_eq!(game.black_elo.unwrap(), 1900);
-        assert_eq!(game.white_title.as_deref().unwrap(), "GM");
-        assert_eq!(game.black_title.as_deref().unwrap(), "IM");
-        assert_eq!(game.eco.as_deref().unwrap(), "B00");
-        assert_eq!(game.opening.as_deref().unwrap(), "Test Opening");
-        assert_eq!(game.utc_date.as_deref().unwrap(), "2024.01.01");
-        assert_eq!(game.utc_time.as_deref().unwrap(), "12:00:00");
-        assert_eq!(game.time_control.as_deref().unwrap(), "180+0");
-        assert_eq!(game.termination.as_deref().unwrap(), "Normal");
-    }
+                                            let mut visitor = GameVisitor::new();
+                                            let mut reader = Reader::new(pgn_content.as_bytes());
 
-    #[test]
-    fn test_pgn_visitor_movetext_with_annotations() {
-        use pgn_reader::Reader;
-        use crate::chess::visitor::GameVisitor;
+                                            let result = reader.read_game(&mut visitor);
+                                            assert!(result.is_ok());
 
-        let pgn_content = r#"
+                                            let game = visitor.current_game.take();
+                                            assert!(game.is_some());
+
+                                            let game = game.unwrap();
+                                            assert_eq!(
+                                                game.event.as_deref().unwrap(),
+                                                "Test with all headers"
+                                            );
+                                            assert_eq!(
+                                                game.site.as_deref().unwrap(),
+                                                "https://example.com"
+                                            );
+                                            // Note: Date header is mapped to utc_date in GameRecord
+                                            assert_eq!(game.white.as_deref().unwrap(), "Player A");
+                                            assert_eq!(game.black.as_deref().unwrap(), "Player B");
+                                            assert_eq!(game.result.as_deref().unwrap(), "1-0");
+                                            assert_eq!(game.white_elo.unwrap(), 2000);
+                                            assert_eq!(game.black_elo.unwrap(), 1900);
+                                            assert_eq!(game.white_title.as_deref().unwrap(), "GM");
+                                            assert_eq!(game.black_title.as_deref().unwrap(), "IM");
+                                            assert_eq!(game.eco.as_deref().unwrap(), "B00");
+                                            assert_eq!(
+                                                game.opening.as_deref().unwrap(),
+                                                "Test Opening"
+                                            );
+                                            assert_eq!(
+                                                game.utc_date.as_deref().unwrap(),
+                                                "2024.01.01"
+                                            );
+                                            assert_eq!(
+                                                game.utc_time.as_deref().unwrap(),
+                                                "12:00:00"
+                                            );
+                                            assert_eq!(
+                                                game.time_control.as_deref().unwrap(),
+                                                "180+0"
+                                            );
+                                            assert_eq!(
+                                                game.termination.as_deref().unwrap(),
+                                                "Normal"
+                                            );
+                                        }
+
+                                        #[test]
+                                        fn test_pgn_visitor_movetext_with_annotations() {
+                                            use crate::chess::visitor::GameVisitor;
+                                            use pgn_reader::Reader;
+
+                                            let pgn_content = r#"
 [Event "Game with annotations"]
 [White "Player 1"]
 [Black "Player 2"]
@@ -413,28 +474,28 @@ mod tests {
 1. e4 { [%eval 0.25] [%clk 1:30:43] } e5 { [%eval 0.22] [%clk 1:30:42] } 2. Nf3 1-0
 "#;
 
-        let mut visitor = GameVisitor::new();
-        let mut reader = Reader::new(pgn_content.as_bytes());
-        
-        let result = reader.read_game(&mut visitor);
-        assert!(result.is_ok());
-        
-        let game = visitor.current_game.take();
-        assert!(game.is_some());
-        
-        let game = game.unwrap();
-        assert!(game.movetext.contains("e4"));
-        assert!(game.movetext.contains("e5"));
-        assert!(game.movetext.contains("Nf3"));
-        assert!(game.movetext.contains("{")); // Should preserve annotations in raw movetext
-    }
+                                            let mut visitor = GameVisitor::new();
+                                            let mut reader = Reader::new(pgn_content.as_bytes());
 
-    #[test]
-    fn test_pgn_visitor_empty_movetext() {
-        use pgn_reader::Reader;
-        use crate::chess::visitor::GameVisitor;
+                                            let result = reader.read_game(&mut visitor);
+                                            assert!(result.is_ok());
 
-        let pgn_content = r#"
+                                            let game = visitor.current_game.take();
+                                            assert!(game.is_some());
+
+                                            let game = game.unwrap();
+                                            assert!(game.movetext.contains("e4"));
+                                            assert!(game.movetext.contains("e5"));
+                                            assert!(game.movetext.contains("Nf3"));
+                                            assert!(game.movetext.contains("{")); // Should preserve annotations in raw movetext
+                                        }
+
+                                        #[test]
+                                        fn test_pgn_visitor_empty_movetext() {
+                                            use crate::chess::visitor::GameVisitor;
+                                            use pgn_reader::Reader;
+
+                                            let pgn_content = r#"
 [Event "Game with no moves"]
 [White "Player 1"]
 [Black "Player 2"]
@@ -443,66 +504,72 @@ mod tests {
 *
 "#;
 
-        let mut visitor = GameVisitor::new();
-        let mut reader = Reader::new(pgn_content.as_bytes());
-        
-        let result = reader.read_game(&mut visitor);
-        assert!(result.is_ok());
-        
-        let game = visitor.current_game.take();
-        assert!(game.is_some());
-        
-        let game = game.unwrap();
-        assert_eq!(game.movetext.trim(), "*");
-    }
+                                            let mut visitor = GameVisitor::new();
+                                            let mut reader = Reader::new(pgn_content.as_bytes());
 
-    #[test]
-    fn test_pgn_visitor_malformed_headers() {
-        use pgn_reader::Reader;
-        use crate::chess::visitor::GameVisitor;
+                                            let result = reader.read_game(&mut visitor);
+                                            assert!(result.is_ok());
 
-        let pgn_content = r#"
+                                            let game = visitor.current_game.take();
+                                            assert!(game.is_some());
+
+                                            let game = game.unwrap();
+                                            assert_eq!(game.movetext.trim(), "*");
+                                        }
+
+                                        #[test]
+                                        fn test_pgn_visitor_malformed_headers() {
+                                            use crate::chess::visitor::GameVisitor;
+                                            use pgn_reader::Reader;
+
+                                            let pgn_content = r#"
 [Event "Malformed - incomplete headers
 [White "Player 3"]
 
 1. d4
 "#;
 
-        let mut visitor = GameVisitor::new();
-        let mut reader = Reader::new(pgn_content.as_bytes());
-        
-        // The pgn-reader library is very robust and typically handles malformed headers
-        let result = reader.read_game(&mut visitor);
-        // It might succeed with partial data or fail gracefully
-        assert!(result.is_ok() || result.is_err());
-    }
+                                            let mut visitor = GameVisitor::new();
+                                            let mut reader = Reader::new(pgn_content.as_bytes());
 
-    #[test]
-    fn test_pgn_visitor_truncated_game() {
-        use pgn_reader::Reader;
-        use crate::chess::visitor::GameVisitor;
+                                            // The pgn-reader library is very robust and typically handles malformed headers
+                                            let result = reader.read_game(&mut visitor);
+                                            // It might succeed with partial data or fail gracefully
+                                            assert!(result.is_ok() || result.is_err());
+                                        }
 
-        let pgn_content = r#"
+                                        #[test]
+                                        fn test_pgn_visitor_truncated_game() {
+                                            use crate::chess::visitor::GameVisitor;
+                                            use pgn_reader::Reader;
+
+                                            let pgn_content = r#"
 [Event "Truncated Game"]
 [White "No one"]
 "#;
 
-        let mut visitor = GameVisitor::new();
-        let mut reader = Reader::new(pgn_content.as_bytes());
-        
-        let result = reader.read_game(&mut visitor);
-        assert!(result.is_ok());
-        
-        // Game should be created but may have incomplete data
-        reader.read_game(&mut visitor).unwrap();
-        let game = visitor.current_game.take();
-        // May or may not have a game depending on parser behavior
-        if let Some(game) = game {
-            assert_eq!(game.event.as_deref().unwrap(), "Truncated Game");
-            assert_eq!(game.white.as_deref().unwrap(), "No one");
-        }
-    }
-}
+                                            let mut visitor = GameVisitor::new();
+                                            let mut reader = Reader::new(pgn_content.as_bytes());
+
+                                            let result = reader.read_game(&mut visitor);
+                                            assert!(result.is_ok());
+
+                                            // Game should be created but may have incomplete data
+                                            reader.read_game(&mut visitor).unwrap();
+                                            let game = visitor.current_game.take();
+                                            // May or may not have a game depending on parser behavior
+                                            if let Some(game) = game {
+                                                assert_eq!(
+                                                    game.event.as_deref().unwrap(),
+                                                    "Truncated Game"
+                                                );
+                                                assert_eq!(
+                                                    game.white.as_deref().unwrap(),
+                                                    "No one"
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
 
                                 reader.game_buffer.clear();
