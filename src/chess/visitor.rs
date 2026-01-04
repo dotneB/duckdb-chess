@@ -1,15 +1,19 @@
 use super::types::GameRecord;
-use pgn_reader::{RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
+use pgn_reader::{Outcome, RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
 use std::fs::File;
 use std::ops::ControlFlow;
 
-/// Visitor implementation for pgn-reader
+/// Streaming PGN visitor (pgn-reader).
 /// Spec: pgn-parsing - Visitor Pattern Implementation
-/// Implements streaming PGN parsing using the pgn-reader library's Visitor trait
+///
+/// Accumulates mainline movetext into a `String`, includes `{ ... }` comments
+/// (whitespace-normalized), and appends the result marker from `outcome()` (or
+/// the `Result` tag as fallback).
 pub struct GameVisitor {
     headers: Vec<(String, String)>,
     movetext_buffer: String,
     move_count: u32,
+    result_marker: Option<String>,
     pub current_game: Option<GameRecord>,
 }
 
@@ -19,6 +23,7 @@ impl GameVisitor {
             headers: Vec::new(),
             movetext_buffer: String::new(),
             move_count: 0,
+            result_marker: None,
             current_game: None,
         }
     }
@@ -31,7 +36,6 @@ impl GameVisitor {
     }
 
     fn finalize_game(&mut self) {
-        // Helper to parse integer values
         let parse_elo = |s: &str| s.parse::<i32>().ok();
 
         self.current_game = Some(GameRecord {
@@ -60,7 +64,6 @@ impl GameVisitor {
     }
 
     /// Spec: pgn-parsing - Error Message Capture
-    /// Creates a partial GameRecord with available headers and a parse error message
     pub fn finalize_game_with_error(&mut self, error_msg: String) {
         let parse_elo = |s: &str| s.parse::<i32>().ok();
 
@@ -122,6 +125,7 @@ impl Visitor for GameVisitor {
         self.headers.clear();
         self.movetext_buffer.clear();
         self.move_count = 0;
+        self.result_marker = None;
         self.current_game = None;
         ControlFlow::Continue(())
     }
@@ -147,13 +151,14 @@ impl Visitor for GameVisitor {
     }
 
     fn san(&mut self, movetext: &mut Self::Movetext, san: SanPlus) -> ControlFlow<Self::Output> {
-        if self.move_count > 0 {
+        if !movetext.is_empty() {
             movetext.push(' ');
         }
+
         if self.move_count % 2 == 0 {
-            // White's move
             movetext.push_str(&format!("{}. ", (self.move_count / 2) + 1));
         }
+
         movetext.push_str(&san.to_string());
         self.move_count += 1;
         ControlFlow::Continue(())
@@ -165,11 +170,37 @@ impl Visitor for GameVisitor {
         comment: RawComment<'_>,
     ) -> ControlFlow<Self::Output> {
         let comment_str = String::from_utf8_lossy(comment.as_bytes());
-        movetext.push_str(&format!(" {{ {} }}", comment_str.trim()));
+
+        if !movetext.is_empty() {
+            movetext.push(' ');
+        }
+        movetext.push_str(&format!("{{ {} }}", comment_str.trim()));
+
         ControlFlow::Continue(())
     }
 
-    fn end_game(&mut self, movetext: Self::Movetext) -> Self::Output {
+    fn outcome(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        outcome: Outcome,
+    ) -> ControlFlow<Self::Output> {
+        self.result_marker = Some(outcome.to_string());
+        ControlFlow::Continue(())
+    }
+
+    fn end_game(&mut self, mut movetext: Self::Movetext) -> Self::Output {
+        let marker = self
+            .result_marker
+            .take()
+            .or_else(|| self.get_header("Result"));
+
+        if let Some(marker) = marker {
+            if !movetext.is_empty() {
+                movetext.push(' ');
+            }
+            movetext.push_str(&marker);
+        }
+
         self.movetext_buffer = movetext;
         self.finalize_game();
     }
@@ -196,7 +227,7 @@ mod tests {
         assert_eq!(game.event.as_deref(), Some("Test Game"));
         assert_eq!(game.site.as_deref(), Some("Internet"));
         assert_eq!(game.result.as_deref(), Some("1-0"));
-        assert_eq!(game.movetext, "1. e4 e5 2. Nf3");
+        assert_eq!(game.movetext, "1. e4 e5 2. Nf3 1-0");
     }
 
     #[test]
@@ -210,7 +241,7 @@ mod tests {
         reader.read_game(&mut visitor).unwrap();
 
         let game = visitor.current_game.expect("Should have parsed a game");
-        assert_eq!(game.movetext, "1. e4 { best by test } e5");
+        assert_eq!(game.movetext, "1. e4 { best by test } e5 1-0");
     }
 
     #[test]
@@ -224,7 +255,7 @@ mod tests {
         reader.read_game(&mut visitor).unwrap();
 
         let game = visitor.current_game.expect("Should have parsed a game");
-        assert_eq!(game.movetext, "");
+        assert_eq!(game.movetext, "*");
         assert_eq!(game.result.as_deref(), Some("*"));
     }
 
@@ -242,5 +273,53 @@ mod tests {
         let game = visitor.current_game.expect("Should have parsed a game");
         assert_eq!(game.white_elo, Some(2500));
         assert_eq!(game.black_elo, Some(2400));
+    }
+
+    #[test]
+    fn test_visitor_comment_before_first_move() {
+        let pgn = r#"[Event "Comment Test"]
+{ opening comment } 1. e4 e5"#;
+
+        let mut reader = Reader::new(pgn.as_bytes());
+        let mut visitor = GameVisitor::new();
+
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.expect("Should have parsed a game");
+        assert_eq!(game.movetext, "{ opening comment } 1. e4 e5");
+    }
+
+    #[test]
+    fn test_visitor_multiple_comments() {
+        let pgn = r#"[Event "Multiple Comments"]
+1. e4 { first } e5 { second } 2. Nf3 { third }"#;
+
+        let mut reader = Reader::new(pgn.as_bytes());
+        let mut visitor = GameVisitor::new();
+
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.expect("Should have parsed a game");
+        assert_eq!(
+            game.movetext,
+            "1. e4 { first } e5 { second } 2. Nf3 { third }"
+        );
+    }
+
+    #[test]
+    fn test_visitor_lichess_annotations() {
+        let pgn = r#"[Event "Lichess Annotations"]
+1. d4 { [%eval 0.25] [%clk 1:30:43] } Nf6 { [%eval 0.22] [%clk 1:30:42] }"#;
+
+        let mut reader = Reader::new(pgn.as_bytes());
+        let mut visitor = GameVisitor::new();
+
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.expect("Should have parsed a game");
+        assert_eq!(
+            game.movetext,
+            "1. d4 { [%eval 0.25] [%clk 1:30:43] } Nf6 { [%eval 0.22] [%clk 1:30:42] }"
+        );
     }
 }

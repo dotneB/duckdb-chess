@@ -100,7 +100,7 @@ The system SHALL use the pgn-reader library's `Reader` and `Visitor` trait for s
 #### Scenario: Game parsing via read_game
 - **WHEN** the table function needs to parse the next game
 - **THEN** it calls `read_game(&mut visitor)` on the `Reader<File>` instance
-- **AND** the visitor's methods (`begin_tags`, `tag`, `begin_movetext`, `san`, `comment`, `end_game`) are invoked by the reader
+- **AND** the visitor's methods (`begin_tags`, `tag`, `begin_movetext`, `san`, `outcome`, `comment`, `end_game`) are invoked by the reader
 
 #### Scenario: Header tag collection
 - **WHEN** the visitor encounters PGN header tags
@@ -109,14 +109,18 @@ The system SHALL use the pgn-reader library's `Reader` and `Visitor` trait for s
 #### Scenario: Movetext accumulation
 - **WHEN** the visitor encounters chess moves
 - **THEN** moves are formatted with move numbers and accumulated into the movetext buffer
+- **AND** variations are skipped to maintain the main line
 
-#### Scenario: Comment preservation
+#### Scenario: Comment handling
 - **WHEN** the visitor encounters comments in curly braces
-- **THEN** comments are preserved in the movetext output with proper formatting
+- **THEN** comments are included in the movetext output in `{ ... }` form
+- **AND** leading/trailing whitespace inside comments is normalized
 
-#### Scenario: Variation skipping
-- **WHEN** the visitor encounters move variations (alternate move sequences)
-- **THEN** variations are skipped to maintain the main game line
+#### Scenario: Result marker capture
+- **WHEN** the visitor's `outcome()` method is called with an Outcome enum
+- **THEN** it converts the Outcome to string representation ("1-0", "0-1", "1/2-1/2", or "*")
+- **AND** it stores the result marker for inclusion in movetext output
+- **AND** the result marker is appended to the movetext string after all moves
 
 #### Scenario: EOF detection
 - **WHEN** `read_game()` is called and the file has been fully consumed
@@ -155,4 +159,5 @@ The PGN reader MUST use a streaming architecture that supports parallel processi
 - **WHEN** a glob pattern matches files larger than available RAM
 - **THEN** the query completes successfully without Out-Of-Memory errors
 - **AND** the system reads files sequentially or concurrently in chunks
+
 
