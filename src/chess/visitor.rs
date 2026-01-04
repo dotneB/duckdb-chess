@@ -1,7 +1,6 @@
 use super::types::GameRecord;
-use pgn_reader::{RawComment, RawTag, SanPlus, Skip, Visitor};
+use pgn_reader::{RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
 use std::fs::File;
-use std::io::BufReader;
 use std::ops::ControlFlow;
 
 /// Visitor implementation for pgn-reader
@@ -92,22 +91,18 @@ impl GameVisitor {
 }
 
 pub struct PgnReaderState {
-    pub reader: BufReader<File>,
+    pub pgn_reader: Reader<File>,
     pub path_idx: usize,
-    pub game_buffer: String,
     pub record_buffer: GameRecord,
-    pub line_buffer: Vec<u8>,
     pub visitor: GameVisitor,
 }
 
 impl PgnReaderState {
-    pub fn new(reader: BufReader<File>, path_idx: usize) -> Self {
+    pub fn new(file: File, path_idx: usize) -> Self {
         Self {
-            reader,
+            pgn_reader: Reader::new(file),
             path_idx,
-            game_buffer: String::new(),
             record_buffer: GameRecord::default(),
-            line_buffer: Vec::new(),
             visitor: GameVisitor::new(),
         }
     }

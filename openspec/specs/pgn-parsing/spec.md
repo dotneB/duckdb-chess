@@ -2,9 +2,7 @@
 
 ## Purpose
 To define the functionality for reading, parsing, and processing PGN (Portable Game Notation) files into structured queryable data, including error handling and performance characteristics.
-
 ## Requirements
-
 ### Requirement: PGN File Reading
 The system SHALL provide a `read_pgn(path_pattern)` table function that parses PGN (Portable Game Notation) files and returns game data as SQL-queryable rows.
 
@@ -84,17 +82,6 @@ The system SHALL output parsed games in chunks to manage memory efficiently for 
 - **WHEN** parsing results in fewer than 2048 games
 - **THEN** the function outputs all games in a single chunk
 
-### Requirement: Game Boundary Detection
-The system SHALL correctly identify game boundaries in PGN files using the `[Event` header as a delimiter.
-
-#### Scenario: Multiple games in single file
-- **WHEN** a PGN file contains multiple games separated by `[Event ` headers
-- **THEN** each game is parsed as a separate record
-
-#### Scenario: Last game in file
-- **WHEN** reaching the end of a file
-- **THEN** the function parses the final accumulated game before closing the file
-
 ### Requirement: Thread Safety
 The system SHALL ensure thread-safe access to shared parsing state across multiple table function calls.
 
@@ -103,7 +90,17 @@ The system SHALL ensure thread-safe access to shared parsing state across multip
 - **THEN** atomic flags and mutexes protect shared game data and offset tracking
 
 ### Requirement: Visitor Pattern Implementation
-The system SHALL use the pgn-reader library's Visitor trait for streaming PGN parsing.
+The system SHALL use the pgn-reader library's `Reader` and `Visitor` trait for streaming PGN parsing, calling `read_game()` directly on a `Reader<File>` instance without intermediate buffering layers.
+
+#### Scenario: Direct streaming from file
+- **WHEN** the table function opens a PGN file for parsing
+- **THEN** it creates a `Reader<File>` instance directly from the file handle
+- **AND** it does NOT wrap the file in a `BufReader` (pgn-reader handles buffering internally)
+
+#### Scenario: Game parsing via read_game
+- **WHEN** the table function needs to parse the next game
+- **THEN** it calls `read_game(&mut visitor)` on the `Reader<File>` instance
+- **AND** the visitor's methods (`begin_tags`, `tag`, `begin_movetext`, `san`, `comment`, `end_game`) are invoked by the reader
 
 #### Scenario: Header tag collection
 - **WHEN** the visitor encounters PGN header tags
@@ -120,6 +117,16 @@ The system SHALL use the pgn-reader library's Visitor trait for streaming PGN pa
 #### Scenario: Variation skipping
 - **WHEN** the visitor encounters move variations (alternate move sequences)
 - **THEN** variations are skipped to maintain the main game line
+
+#### Scenario: EOF detection
+- **WHEN** `read_game()` is called and the file has been fully consumed
+- **THEN** it returns `Ok(None)` indicating EOF
+- **AND** the parser moves to the next file or completes
+
+#### Scenario: Error during parsing
+- **WHEN** `read_game()` encounters a parsing error (e.g., malformed tag, unterminated comment)
+- **THEN** it returns `Err(e)` with a descriptive error message
+- **AND** the table function calls `visitor.finalize_game_with_error()` to capture partial game data
 
 ### Requirement: UTF-8 Handling
 The reader MUST handle PGN files containing invalid UTF-8 sequences without failing or skipping lines.
@@ -148,3 +155,4 @@ The PGN reader MUST use a streaming architecture that supports parallel processi
 - **WHEN** a glob pattern matches files larger than available RAM
 - **THEN** the query completes successfully without Out-Of-Memory errors
 - **AND** the system reads files sequentially or concurrently in chunks
+
