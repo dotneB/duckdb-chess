@@ -2,7 +2,7 @@
 # description: Test chess_moves_hash scalar function (Spec: move-analysis - Moves Hashing)
 # group: [chess_moves_hash]
 
-require duckdb_chess
+# require duckdb_chess
 
 # Test hash consistency - identical moves with different formatting
 query I

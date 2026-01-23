@@ -24,6 +24,8 @@ all: build
 install-tools:
 	@echo "Installing cargo-duckdb-ext-tools..."
 	cargo install cargo-duckdb-ext-tools --path "../cargo-duckdb-ext-tools"
+	@echo "Installing duckdb-sqllogictest-rs..."
+	cargo install duckdb-slt --path "../duckdb-sqllogictest-rs"
 
 # Build debug extension
 build:
@@ -39,6 +41,23 @@ release:
 test: build
 	@echo "Running cargo tests..."
 	cargo test
+	@echo "Running duckdb-slt integration tests..."
+	duckdb-slt.exe -e ./target/debug/duckdb_chess.duckdb_extension -u -w "$(CURDIR)" "$(CURDIR)/test/sql/*.test"
+
+# Run Rust unit tests
+test-release: release
+	@echo "Running cargo tests..."
+	cargo test
+	@echo "Running duckdb-slt integration tests..."
+	duckdb-slt.exe -e ./target/release/duckdb_chess.duckdb_extension -u -w "$(CURDIR)" "$(CURDIR)/test/sql/*.test"
+
+check:
+	cargo fmt --check
+	cargo clippy -- -D warnings
+
+check-fix:
+	cargo fmt
+	cargo clippy --fix
 
 # Clean build artifacts
 clean:
@@ -46,7 +65,7 @@ clean:
 	cargo clean
 
 # Development helper: run a quick build and test cycle
-dev: build test
+dev: build check test
 
 # Show available targets
 help:

@@ -7,7 +7,7 @@ use std::ops::ControlFlow;
 /// Spec: pgn-parsing - Visitor Pattern Implementation
 ///
 /// Accumulates mainline movetext into a `String`, includes `{ ... }` comments
-/// (whitespace-normalized), and appends the result marker from `outcome()` (or
+/// (whitespace-normalized). Result is captured separately via `outcome()` (or
 /// the `Result` tag as fallback).
 pub struct GameVisitor {
     headers: Vec<(String, String)>,
@@ -43,7 +43,9 @@ impl GameVisitor {
             site: self.get_header("Site"),
             white: self.get_header("White"),
             black: self.get_header("Black"),
-            result: self.get_header("Result"),
+            result: self
+                .get_header("Result")
+                .or_else(|| self.result_marker.clone()),
             white_title: self.get_header("WhiteTitle"),
             black_title: self.get_header("BlackTitle"),
             white_elo: self.get_header("WhiteElo").and_then(|s| parse_elo(&s)),
@@ -72,7 +74,9 @@ impl GameVisitor {
             site: self.get_header("Site"),
             white: self.get_header("White"),
             black: self.get_header("Black"),
-            result: self.get_header("Result"),
+            result: self
+                .get_header("Result")
+                .or_else(|| self.result_marker.clone()),
             white_title: self.get_header("WhiteTitle"),
             black_title: self.get_header("BlackTitle"),
             white_elo: self.get_header("WhiteElo").and_then(|s| parse_elo(&s)),
@@ -155,7 +159,7 @@ impl Visitor for GameVisitor {
             movetext.push(' ');
         }
 
-        if self.move_count % 2 == 0 {
+        if self.move_count.is_multiple_of(2) {
             movetext.push_str(&format!("{}. ", (self.move_count / 2) + 1));
         }
 
@@ -188,18 +192,12 @@ impl Visitor for GameVisitor {
         ControlFlow::Continue(())
     }
 
-    fn end_game(&mut self, mut movetext: Self::Movetext) -> Self::Output {
+    fn end_game(&mut self, movetext: Self::Movetext) -> Self::Output {
         let marker = self
             .result_marker
-            .take()
+            .clone()
             .or_else(|| self.get_header("Result"));
-
-        if let Some(marker) = marker {
-            if !movetext.is_empty() {
-                movetext.push(' ');
-            }
-            movetext.push_str(&marker);
-        }
+        self.result_marker = marker;
 
         self.movetext_buffer = movetext;
         self.finalize_game();
@@ -227,7 +225,7 @@ mod tests {
         assert_eq!(game.event.as_deref(), Some("Test Game"));
         assert_eq!(game.site.as_deref(), Some("Internet"));
         assert_eq!(game.result.as_deref(), Some("1-0"));
-        assert_eq!(game.movetext, "1. e4 e5 2. Nf3 1-0");
+        assert_eq!(game.movetext, "1. e4 e5 2. Nf3");
     }
 
     #[test]
@@ -241,7 +239,7 @@ mod tests {
         reader.read_game(&mut visitor).unwrap();
 
         let game = visitor.current_game.expect("Should have parsed a game");
-        assert_eq!(game.movetext, "1. e4 { best by test } e5 1-0");
+        assert_eq!(game.movetext, "1. e4 { best by test } e5");
     }
 
     #[test]
@@ -255,7 +253,7 @@ mod tests {
         reader.read_game(&mut visitor).unwrap();
 
         let game = visitor.current_game.expect("Should have parsed a game");
-        assert_eq!(game.movetext, "*");
+        assert_eq!(game.movetext, "");
         assert_eq!(game.result.as_deref(), Some("*"));
     }
 

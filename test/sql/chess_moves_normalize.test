@@ -2,7 +2,7 @@
 # description: Test chess_moves_normalize function (Spec: move-analysis - Moves Normalization)
 # group: [chess_moves_normalize]
 
-require duckdb_chess
+# require duckdb_chess
 
 # Test single annotation removal (Spec: Movetext Annotation Removal - Remove single annotation)
 query I

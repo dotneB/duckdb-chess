@@ -7,50 +7,6 @@ use libduckdb_sys::duckdb_string_t;
 use std::error::Error;
 use std::ffi::CString;
 
-/// Removes curly brace annotations from chess movetext while preserving move structure
-/// Spec: annotation-filtering - Movetext Annotation Removal
-/// Spec: annotation-filtering - Nested Annotation Handling (tracks brace depth)
-/// Spec: annotation-filtering - Whitespace Normalization (collapses spaces and trims)
-///
-/// Note: This function preserves move numbers. For a canonical representation without
-/// move numbers, use normalize_movetext() or the chess_moves_normalize SQL function.
-pub fn filter_movetext_annotations(movetext: &str) -> String {
-    let mut result = String::new();
-    let mut in_annotation = false;
-    let mut brace_depth = 0;
-    let mut prev_was_space = false;
-
-    for ch in movetext.chars() {
-        match ch {
-            '{' => {
-                in_annotation = true;
-                brace_depth += 1;
-            }
-            '}' => {
-                brace_depth -= 1;
-                if brace_depth == 0 {
-                    in_annotation = false;
-                    // Mark that we should skip next space if any
-                    prev_was_space = true;
-                }
-            }
-            ' ' if !in_annotation => {
-                if !prev_was_space && !result.is_empty() {
-                    result.push(' ');
-                    prev_was_space = true;
-                }
-            }
-            _ if !in_annotation => {
-                prev_was_space = false;
-                result.push(ch);
-            }
-            _ => {}
-        }
-    }
-
-    result.trim().to_string()
-}
-
 /// Normalize chess movetext by removing comments {}, variations (), and NAGs ($n, !, ?, etc.)
 /// Returns a canonical string representation with standardized spacing
 /// Spec: move-analysis - Moves Normalization
@@ -131,7 +87,7 @@ fn is_move_number(token: &str) -> bool {
     // Check for patterns like "1.", "12.", "1..."
     if token.ends_with('.') || token.contains("...") {
         // Verify it starts with digits
-        token.chars().next().map_or(false, |c| c.is_ascii_digit())
+        token.chars().next().is_some_and(|c| c.is_ascii_digit())
     } else {
         false
     }
@@ -153,10 +109,11 @@ pub fn preprocess_move_numbers(movetext: &str) -> String {
         } else if ch == '.' && in_number {
             // This is a move number period
             // Check if next char is not whitespace and not another period
-            if let Some(&next_ch) = chars.peek() {
-                if !next_ch.is_whitespace() && next_ch != '.' {
-                    result.push(' ');
-                }
+            if let Some(&next_ch) = chars.peek()
+                && !next_ch.is_whitespace()
+                && next_ch != '.'
+            {
+                result.push(' ');
             }
             in_number = false;
         } else if !ch.is_ascii_digit() {
@@ -177,14 +134,14 @@ fn strip_nags(token: &str) -> String {
         match ch {
             '$' => {
                 // Skip $ and following digits
-                while chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+                while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
                     chars.next();
                 }
             }
             '!' | '?' => {
                 // Skip NAG symbols (!, ??, !!, ?!, !?)
                 // Continue skipping consecutive ! and ?
-                while chars.peek().map_or(false, |c| *c == '!' || *c == '?') {
+                while chars.peek().is_some_and(|c| *c == '!' || *c == '?') {
                     chars.next();
                 }
             }
@@ -193,40 +150,6 @@ fn strip_nags(token: &str) -> String {
     }
 
     result
-}
-
-#[allow(dead_code)]
-pub struct FilterMovetextScalar;
-
-impl VScalar for FilterMovetextScalar {
-    type State = ();
-
-    unsafe fn invoke(
-        _state: &Self::State,
-        input: &mut DataChunkHandle,
-        output: &mut dyn WritableVector,
-    ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec = input.flat_vector(0);
-        let output_vec = output.flat_vector();
-
-        // Get raw slice of duckdb_string_t
-        let input_slice = input_vec.as_slice::<duckdb_string_t>();
-
-        for i in 0..len {
-            let val = unsafe { read_duckdb_string(input_slice[i]) };
-            let filtered = filter_movetext_annotations(&val);
-            output_vec.insert(i, CString::new(filtered)?);
-        }
-        Ok(())
-    }
-
-    fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![ScalarFunctionSignature::exact(
-            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        )]
-    }
 }
 
 pub struct ChessMovesNormalizeScalar;
@@ -245,8 +168,8 @@ impl VScalar for ChessMovesNormalizeScalar {
 
         let input_slice = input_vec.as_slice::<duckdb_string_t>();
 
-        for i in 0..len {
-            let val = unsafe { read_duckdb_string(input_slice[i]) };
+        for (i, s) in input_slice.iter().take(len).enumerate() {
+            let val = unsafe { read_duckdb_string(*s) };
             let normalized = normalize_movetext(&val);
             output_vec.insert(i, CString::new(normalized)?);
         }
@@ -278,47 +201,6 @@ unsafe fn read_duckdb_string(s: duckdb_string_t) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_filter_simple_annotation() {
-        let input = "1. e4 { comment } e5";
-        assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
-    }
-
-    #[test]
-    fn test_filter_multiple_annotations() {
-        let input = "1. e4 { first } e5 { second } 2. Nf3 { third }";
-        assert_eq!(filter_movetext_annotations(input), "1. e4 e5 2. Nf3");
-    }
-
-    #[test]
-    fn test_filter_no_annotations() {
-        let input = "1. e4 e5 2. Nf3 Nc6";
-        assert_eq!(filter_movetext_annotations(input), "1. e4 e5 2. Nf3 Nc6");
-    }
-
-    #[test]
-    fn test_filter_nested_annotations() {
-        let input = "1. e4 { outer { inner } text } e5";
-        assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
-    }
-
-    #[test]
-    fn test_filter_whitespace_normalization() {
-        let input = "1. e4   { comment }   e5";
-        assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
-    }
-
-    #[test]
-    fn test_filter_empty_string() {
-        assert_eq!(filter_movetext_annotations(""), "");
-    }
-
-    #[test]
-    fn test_filter_leading_trailing_whitespace() {
-        let input = "  1. e4 e5  ";
-        assert_eq!(filter_movetext_annotations(input), "1. e4 e5");
-    }
 
     #[test]
     fn test_normalize_complex() {

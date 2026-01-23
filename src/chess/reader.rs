@@ -566,9 +566,8 @@ mod tests {
         assert!(game.is_some());
 
         let game = game.unwrap();
-        // Movetext should be empty or just contain the result marker
-        // The visitor.rs test shows this is empty, which is correct
-        assert!(game.movetext.trim().is_empty() || game.movetext.trim() == "*");
+        // Movetext should be empty (result is stored separately)
+        assert!(game.movetext.trim().is_empty());
     }
 
     #[test]

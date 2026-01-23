@@ -2,7 +2,7 @@
 # description: Test read_pgn table function with Lichess schema
 # group: [chess]
 
-require duckdb_chess
+# require duckdb_chess
 
 # Test schema matches extended Lichess (16 columns + 1 diagnostic column)
 query IIIIII

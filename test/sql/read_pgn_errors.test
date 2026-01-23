@@ -2,7 +2,7 @@
 # description: Test error handling and edge cases in read_pgn (Spec: pgn-parsing - Malformed Game Handling)
 # group: [read_pgn]
 
-require duckdb_chess
+# require duckdb_chess
 
 # Test empty PGN file (Spec: pgn-parsing - Empty result for non-existent files)
 query I
@@ -27,10 +27,8 @@ Malformed - incomplete headers	Player 3	NULL	NULL
 Another Valid Game	Player 4	0-1	NULL
 
 # Test non-existent file returns an error
-statement error
+statement error Failed to open file
 SELECT * FROM read_pgn('test/pgn_files/does_not_exist.pgn');
-----
-Failed to open file
 
 # Test glob pattern that matches no files
 query I

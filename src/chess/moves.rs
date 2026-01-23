@@ -30,8 +30,8 @@ impl VScalar for ChessMovesJsonScalar {
 
         let input_slice = input_vec.as_slice::<duckdb_string_t>();
 
-        for i in 0..len {
-            let val = unsafe { read_duckdb_string(input_slice[i]) };
+        for (i, s) in input_slice.iter().take(len).enumerate() {
+            let val = unsafe { read_duckdb_string(*s) };
             match process_moves(&val) {
                 Ok(json) => {
                     output_vec.insert(i, CString::new(json)?);
@@ -140,14 +140,14 @@ impl VScalar for ChessMovesHashScalar {
         let input_slice = input_vec.as_slice::<duckdb_string_t>();
         let output_slice = output_vec.as_mut_slice::<i64>();
 
-        for i in 0..len {
-            let val = unsafe { read_duckdb_string(input_slice[i]) };
+        for (out, s) in output_slice.iter_mut().take(len).zip(input_slice.iter()) {
+            let val = unsafe { read_duckdb_string(*s) };
             let normalized = normalize_movetext(&val);
 
             // Compute hash
             let mut hasher = DefaultHasher::new();
             normalized.hash(&mut hasher);
-            output_slice[i] = hasher.finish() as i64;
+            *out = hasher.finish() as i64;
         }
         Ok(())
     }
@@ -180,11 +180,16 @@ impl VScalar for ChessMovesSubsetScalar {
         let input_slice_1 = input_vec_1.as_slice::<duckdb_string_t>();
         let output_slice = output_vec.as_mut_slice::<bool>();
 
-        for i in 0..len {
-            let short_text = unsafe { read_duckdb_string(input_slice_0[i]) };
-            let long_text = unsafe { read_duckdb_string(input_slice_1[i]) };
+        for ((out, s0), s1) in output_slice
+            .iter_mut()
+            .take(len)
+            .zip(input_slice_0.iter())
+            .zip(input_slice_1.iter())
+        {
+            let short_text = unsafe { read_duckdb_string(*s0) };
+            let long_text = unsafe { read_duckdb_string(*s1) };
 
-            output_slice[i] = check_moves_subset(&short_text, &long_text);
+            *out = check_moves_subset(&short_text, &long_text);
         }
         Ok(())
     }
