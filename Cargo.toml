@@ -16,6 +16,4 @@ duckdb-ext-macros = "0.1.0"
 libduckdb-sys = { version = "1.4.3", features = ["loadable-extension"] }
 pgn-reader = "0.28"
 shakmaty = "0.29"
-uuid = { version = "1", features = ["v4"] }
-chrono = { version = "0.4", features = ["serde"] }
 glob = "0.3"

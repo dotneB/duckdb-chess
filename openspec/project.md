@@ -19,8 +19,6 @@ Key features:
   - `libduckdb-sys` (1.4.3) - Low-level DuckDB C API bindings
   - `pgn-reader` (0.28) - PGN parsing library
   - `shakmaty` (0.29) - Chess logic and move validation
-  - `uuid` (1) - Unique identifier generation
-  - `chrono` (0.4) - Date/time handling
   - `glob` (0.3) - File pattern matching
 - **Build System**: Cargo + cargo-duckdb-ext-tools (optional Makefile wrappers)
 - **Build Tools**: `cargo-duckdb-ext-tools` - Native Rust packaging (replaces Python scripts)
