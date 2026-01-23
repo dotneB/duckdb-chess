@@ -1,0 +1,35 @@
+# name: test/sql/chess_ply_count.test
+# description: Test chess_ply_count scalar function
+# group: [chess_ply_count]
+
+# require duckdb_chess
+
+query I
+SELECT chess_ply_count('1. e4 e5 2. Nf3');
+----
+3
+
+query I
+SELECT chess_ply_count('1. e4! {c} e5?? 1-0');
+----
+2
+
+query I
+SELECT chess_ply_count('1. e4 e5 INVALID 2. Nf3');
+----
+2
+
+query I
+SELECT chess_ply_count('1. e4 e5 2. Kxe8');
+----
+2
+
+query I
+SELECT chess_ply_count(NULL);
+----
+0
+
+query I
+SELECT chess_ply_count('');
+----
+0

@@ -101,6 +101,42 @@ SELECT chess_moves_hash('e4 e5 Nf3 Nc6');
 -- Convert to JSON
 SELECT chess_moves_json('e4 e5 Nf3 Nc6');
 
+-- Convert to JSON with a ply cap (useful for opening detection joins)
+SELECT chess_moves_json('e4 e5 Nf3 Nc6', 40);
+
+-- Convert FEN to the Lichess openings dataset join key (EPD)
+SELECT chess_fen_epd('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1');
+
+-- Count plies quickly
+SELECT chess_ply_count('1. e4 e5 2. Nf3');
+
+-- Opening detection example (recommended: do this in SQL)
+-- Assumes an `openings` table (e.g., loaded from the Lichess openings Parquet) with columns: epd, eco, name, uci
+WITH params AS (
+  SELECT max(array_length(string_split(uci, ' '))) AS max_opening_ply
+  FROM openings
+),
+pos AS (
+  SELECT
+    g.game_id,
+    json_extract(m.value, '$.ply')::INTEGER AS ply,
+    trim(json_extract_string(m.value, '$.epd')) AS epd
+  FROM games g,
+       params p,
+       json_each(CAST(chess_moves_json(g.movetext, p.max_opening_ply) AS JSON)) m
+),
+matches AS (
+  SELECT p.game_id, p.ply, o.eco, o.name
+  FROM pos p
+  JOIN openings o ON trim(o.epd) = p.epd
+)
+SELECT game_id, eco, name
+FROM (
+  SELECT *, row_number() OVER (PARTITION BY game_id ORDER BY ply DESC) AS rn
+  FROM matches
+)
+WHERE rn = 1;
+
 -- Extract move subset
 SELECT chess_moves_subset('e4 e5 Nf3 Nc6 Bb5', 3); -- First 3 moves
 ```

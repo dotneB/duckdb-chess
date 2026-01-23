@@ -1,0 +1,30 @@
+# name: test/sql/chess_fen_epd.test
+# description: Test chess_fen_epd scalar function
+# group: [chess_fen_epd]
+
+# require duckdb_chess
+
+query I
+SELECT chess_fen_epd('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+----
+rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -
+
+query I
+SELECT chess_fen_epd('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1');
+----
+rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3
+
+query I
+SELECT chess_fen_epd(NULL);
+----
+NULL
+
+query I
+SELECT chess_fen_epd('');
+----
+NULL
+
+query I
+SELECT chess_fen_epd('not a fen');
+----
+NULL

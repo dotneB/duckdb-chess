@@ -5,7 +5,7 @@ use duckdb::{
     vtab::arrow::WritableVector,
 };
 use libduckdb_sys::duckdb_string_t;
-use shakmaty::{Chess, EnPassantMode, Position, san::SanPlus};
+use shakmaty::{Chess, EnPassantMode, Position, fen::Fen, san::SanPlus};
 use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::ffi::CString;
@@ -28,11 +28,34 @@ impl VScalar for ChessMovesJsonScalar {
         let input_vec = input.flat_vector(0);
         let output_vec = output.flat_vector();
 
+        let max_ply_vec = if input.num_columns() > 1 {
+            Some(input.flat_vector(1))
+        } else {
+            None
+        };
+
         let input_slice = input_vec.as_slice::<duckdb_string_t>();
 
         for (i, s) in input_slice.iter().take(len).enumerate() {
+            if input_vec.row_is_null(i as u64) {
+                output_vec.insert(i, CString::new("[]")?);
+                continue;
+            }
+
             let val = unsafe { read_duckdb_string(*s) };
-            match process_moves(&val) {
+
+            let max_ply = match &max_ply_vec {
+                None => None,
+                Some(v) => {
+                    if v.row_is_null(i as u64) {
+                        None
+                    } else {
+                        Some(v.as_slice::<i64>()[i])
+                    }
+                }
+            };
+
+            match process_moves_with_limit(&val, max_ply) {
                 Ok(json) => {
                     output_vec.insert(i, CString::new(json)?);
                 }
@@ -46,14 +69,32 @@ impl VScalar for ChessMovesJsonScalar {
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
-        vec![ScalarFunctionSignature::exact(
-            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        )]
+        vec![
+            ScalarFunctionSignature::exact(
+                vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+            ScalarFunctionSignature::exact(
+                vec![
+                    LogicalTypeHandle::from(LogicalTypeId::Varchar),
+                    LogicalTypeHandle::from(LogicalTypeId::Bigint),
+                ],
+                LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            ),
+        ]
     }
 }
 
-fn process_moves(movetext: &str) -> Result<String, Box<dyn Error>> {
+fn process_moves_with_limit(
+    movetext: &str,
+    max_ply: Option<i64>,
+) -> Result<String, Box<dyn Error>> {
+    if let Some(max_ply) = max_ply
+        && max_ply <= 0
+    {
+        return Ok("[]".to_string());
+    }
+
     let clean_text = normalize_movetext(movetext);
     let mut pos = Chess::default();
     let mut json = String::new();
@@ -64,24 +105,28 @@ fn process_moves(movetext: &str) -> Result<String, Box<dyn Error>> {
     let mut ply = 0;
 
     for token in clean_text.split_whitespace() {
-        if token.ends_with('.') || token.contains("...") {
-            continue;
-        }
-
         if token == "1-0" || token == "0-1" || token == "1/2-1/2" || token == "*" {
             continue;
         }
 
         let san: SanPlus = match token.parse() {
             Ok(s) => s,
-            Err(_) => {
-                break;
-            }
+            Err(_) => break,
         };
 
-        let m = san.san.to_move(&pos)?;
+        let m = match san.san.to_move(&pos) {
+            Ok(m) => m,
+            Err(_) => break,
+        };
+
         pos.play_unchecked(m);
         ply += 1;
+
+        if let Some(max_ply) = max_ply
+            && ply > max_ply
+        {
+            break;
+        }
 
         if !first {
             json.push(',');
@@ -89,11 +134,12 @@ fn process_moves(movetext: &str) -> Result<String, Box<dyn Error>> {
         first = false;
 
         let fen = duckdb_fen(&pos);
+        let epd = fen_str_to_epd(&fen).unwrap_or_default();
 
         write!(
             json,
-            r#"{{"ply":{},"move":"{}","fen":"{}"}}"#,
-            ply, token, fen
+            r#"{{"ply":{},"move":"{}","fen":"{}","epd":"{}"}}"#,
+            ply, token, fen, epd
         )?;
     }
 
@@ -102,10 +148,142 @@ fn process_moves(movetext: &str) -> Result<String, Box<dyn Error>> {
 }
 
 fn duckdb_fen(pos: &Chess) -> String {
-    use shakmaty::fen::Fen;
-
-    let fen = Fen::from_position(pos, EnPassantMode::Legal);
+    let fen = Fen::from_position(pos, EnPassantMode::Always);
     fen.to_string()
+}
+
+fn fen_str_to_epd(fen: &str) -> Option<String> {
+    let mut fields = fen.split_whitespace();
+    let board = fields.next()?;
+    let side = fields.next()?;
+    let castling = fields.next()?;
+    let ep = fields.next()?;
+    Some(format!("{} {} {} {}", board, side, castling, ep))
+}
+
+fn fen_to_epd(fen: &str) -> Option<String> {
+    let fen = fen.trim();
+    if fen.is_empty() {
+        return None;
+    }
+
+    let parsed: Fen = fen.parse().ok()?;
+    fen_str_to_epd(&parsed.to_string())
+}
+
+// Spec: move-analysis - FEN to EPD
+pub struct ChessFenEpdScalar;
+
+impl VScalar for ChessFenEpdScalar {
+    type State = ();
+
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let len = input.len();
+        let input_vec = input.flat_vector(0);
+        let mut output_vec = output.flat_vector();
+
+        let input_slice = input_vec.as_slice::<duckdb_string_t>();
+
+        for (i, s) in input_slice.iter().take(len).enumerate() {
+            if input_vec.row_is_null(i as u64) {
+                output_vec.set_null(i);
+                continue;
+            }
+
+            let val = unsafe { read_duckdb_string(*s) };
+            match fen_to_epd(&val) {
+                Some(epd) => output_vec.insert(i, CString::new(epd)?),
+                None => output_vec.set_null(i),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        )]
+    }
+}
+
+// Spec: move-analysis - Ply Count
+pub struct ChessPlyCountScalar;
+
+impl VScalar for ChessPlyCountScalar {
+    type State = ();
+
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let len = input.len();
+        let input_vec = input.flat_vector(0);
+        let mut output_vec = output.flat_vector();
+
+        let input_slice = input_vec.as_slice::<duckdb_string_t>();
+        let output_slice = output_vec.as_mut_slice::<i64>();
+
+        for (i, s) in input_slice.iter().take(len).enumerate() {
+            if input_vec.row_is_null(i as u64) {
+                output_slice[i] = 0;
+                continue;
+            }
+
+            let val = unsafe { read_duckdb_string(*s) };
+            output_slice[i] = ply_count(&val);
+        }
+
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
+            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+        )]
+    }
+}
+
+fn ply_count(movetext: &str) -> i64 {
+    if movetext.trim().is_empty() {
+        return 0;
+    }
+
+    let clean_text = normalize_movetext(movetext);
+    if clean_text.is_empty() {
+        return 0;
+    }
+
+    let mut pos = Chess::default();
+    let mut ply = 0;
+
+    for token in clean_text.split_whitespace() {
+        if token == "1-0" || token == "0-1" || token == "1/2-1/2" || token == "*" {
+            continue;
+        }
+
+        let san: SanPlus = match token.parse() {
+            Ok(s) => s,
+            Err(_) => break,
+        };
+
+        let m = match san.san.to_move(&pos) {
+            Ok(m) => m,
+            Err(_) => break,
+        };
+
+        pos.play_unchecked(m);
+        ply += 1;
+    }
+
+    ply
 }
 
 unsafe fn read_duckdb_string(s: duckdb_string_t) -> String {
@@ -247,32 +425,40 @@ mod tests {
     #[test]
     fn test_process_moves_basic() {
         let input = "1. e4 e5";
-        let json = process_moves(input).unwrap();
+        let json = process_moves_with_limit(input, None).unwrap();
         // Check structure roughly
         assert!(json.starts_with('['));
         assert!(json.ends_with(']'));
         assert!(json.contains(r#""ply":1,"move":"e4""#));
         assert!(json.contains(r#""ply":2,"move":"e5""#));
+        assert!(json.contains(r#""epd":"#));
     }
 
     #[test]
     fn test_process_moves_with_annotations() {
         let input = "1. e4 {comment} e5";
-        let json = process_moves(input).unwrap();
+        let json = process_moves_with_limit(input, None).unwrap();
         assert!(json.contains(r#""move":"e5""#));
     }
 
     #[test]
     fn test_process_moves_empty() {
         let input = "";
-        let json = process_moves(input).unwrap();
+        let json = process_moves_with_limit(input, None).unwrap();
+        assert_eq!(json, "[]");
+    }
+
+    #[test]
+    fn test_process_moves_max_ply_zero() {
+        let input = "1. e4 e5";
+        let json = process_moves_with_limit(input, Some(0)).unwrap();
         assert_eq!(json, "[]");
     }
 
     #[test]
     fn test_process_moves_with_result_marker() {
         let input = "1. e4 e5 1-0";
-        let json = process_moves(input).unwrap();
+        let json = process_moves_with_limit(input, None).unwrap();
         assert!(json.contains(r#""ply":1,"move":"e4""#));
         assert!(json.contains(r#""ply":2,"move":"e5""#));
         // Should not contain result marker
@@ -282,12 +468,34 @@ mod tests {
     #[test]
     fn test_process_moves_with_invalid_move() {
         let input = "1. e4 e5 INVALID";
-        let json = process_moves(input).unwrap();
+        let json = process_moves_with_limit(input, None).unwrap();
         // Should return valid prefix up to e5
         assert!(json.contains(r#""ply":1,"move":"e4""#));
         assert!(json.contains(r#""ply":2,"move":"e5""#));
         // Should not include INVALID move
         assert!(!json.contains("INVALID"));
+    }
+
+    #[test]
+    fn test_fen_to_epd_valid() {
+        let fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
+        assert_eq!(
+            fen_to_epd(fen).as_deref(),
+            Some("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3")
+        );
+    }
+
+    #[test]
+    fn test_fen_to_epd_invalid() {
+        assert!(fen_to_epd("not a fen").is_none());
+        assert!(fen_to_epd("").is_none());
+    }
+
+    #[test]
+    fn test_ply_count_ignores_junk_and_stops() {
+        assert_eq!(ply_count("1. e4! {c} e5?? 1-0"), 2);
+        assert_eq!(ply_count("1. e4 e5 INVALID 2. Nf3"), 2);
+        assert_eq!(ply_count("1. e4 e5 2. Kxe8"), 2);
     }
 
     #[test]

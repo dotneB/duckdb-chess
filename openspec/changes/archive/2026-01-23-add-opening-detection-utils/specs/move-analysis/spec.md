@@ -1,8 +1,7 @@
-# move-analysis Specification
+# Move Analysis Spec Delta
 
-## Purpose
-To provide analytical functions for chess move sequences, enabling JSON extraction, normalization, hashing, and subset comparison of movetext to support game analysis and comparison workflows.
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: Move Extraction to JSON
 The system SHALL provide scalar function overloads `chess_moves_json(movetext)` and `chess_moves_json(movetext, max_ply)` that parse PGN movetext and return a JSON array string containing details for moves.
 Each JSON object SHALL include:
@@ -104,46 +103,7 @@ For `chess_moves_json(movetext, max_ply)`:
 - **WHEN** the movetext contains comments/annotations (e.g., `'1. e4 {Best by test} e5'`)
 - **THEN** the annotations are ignored, and the moves are parsed correctly.
 
-### Requirement: Moves Normalization
-The system SHALL provide a scalar function `chess_moves_normalize(movetext)` that returns a canonical string representation of the move sequence, removing comments, recursive variations, and NAGs, while standardizing spacing.
-
-#### Scenario: Normalize complex movetext
-- **WHEN** user calls `chess_moves_normalize('1. e4 {comment} (1. d4) e5?!')`
-- **THEN** the function returns `'1. e4 e5'` (or similar standard format, ensuring clean SAN moves).
-
-#### Scenario: Handle empty input
-- **WHEN** user calls `chess_moves_normalize(NULL)`
-- **THEN** the function returns `NULL` or empty string (design choice: NULL -> NULL).
-
-### Requirement: Moves Hashing
-The system SHALL provide a scalar function `chess_moves_hash(movetext)` that returns a consistent hash value (e.g., 64-bit integer or hex string) representing the sequence of moves, independent of formatting or annotations.
-
-#### Scenario: Hash consistency
-- **WHEN** user calls `chess_moves_hash` on two games with identical moves but different comments/formatting
-- **THEN** the returned hash values are identical.
-
-#### Scenario: Hash discrimination
-- **WHEN** user calls `chess_moves_hash` on two games with different moves
-- **THEN** the returned hash values are different (with high probability).
-
-### Requirement: Subsumption Detection
-The system SHALL provide a scalar function `chess_moves_subset(short_movetext, long_movetext)` that returns true if the moves in `short_movetext` are an exact prefix of the moves in `long_movetext`.
-
-#### Scenario: Exact subset
-- **WHEN** user calls `chess_moves_subset('1. e4', '1. e4 e5')`
-- **THEN** the function returns `TRUE`.
-
-#### Scenario: Not a subset
-- **WHEN** user calls `chess_moves_subset('1. d4', '1. e4 e5')`
-- **THEN** the function returns `FALSE`.
-
-#### Scenario: Same game
-- **WHEN** user calls `chess_moves_subset('1. e4', '1. e4')`
-- **THEN** the function returns `TRUE`.
-
-#### Scenario: Short is longer than long
-- **WHEN** user calls `chess_moves_subset('1. e4 e5', '1. e4')`
-- **THEN** the function returns `FALSE`.
+## ADDED Requirements
 
 ### Requirement: Ply Count
 The system SHALL provide a scalar function `chess_ply_count(movetext)` that returns the number of valid plies found in PGN movetext.
@@ -184,4 +144,3 @@ The EPD format SHALL be the first 4 fields of a valid FEN string: `board side ca
 #### Scenario: Invalid input
 - **WHEN** user calls `chess_fen_epd('not a fen')`
 - **THEN** the function returns `NULL`
-
