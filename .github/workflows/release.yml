@@ -111,7 +111,17 @@ jobs:
           done
           ls -la release_assets/
 
+      - name: Install git-cliff
+        uses: taiki-e/install-action@git-cliff
+
+      - name: Generate changelog
+        id: git-cliff
+        run: git-cliff --latest --strip header
+
       - name: Publish Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" --target "${{ github.sha }}" --title "${{ github.ref_name }}" --notes-file "CHANGELOG.md" release_assets/*
+          RELEASE_CHANGES: ${{ steps.git-cliff.outputs.content }}
+        run: |
+          echo "$RELEASE_CHANGES" > $RUNNER_TEMP/notes.txt
+          gh release create "${{ github.ref_name }}" --target "${{ github.sha }}" --title "${{ github.ref_name }}" --notes-file "$RUNNER_TEMP/notes.txt" release_assets/*
