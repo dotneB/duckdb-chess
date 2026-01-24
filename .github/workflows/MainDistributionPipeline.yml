@@ -4,9 +4,10 @@
 #
 name: Main Extension Distribution Pipeline
 on:
-  push:
-    branches: [main]
-  pull_request:
+## Keep it on workflow_dispatch only to allow to test it manually before submitting a PR to community extensions
+#  push:
+#    branches: [main]
+#  pull_request:
   workflow_dispatch:
 
 concurrency:
