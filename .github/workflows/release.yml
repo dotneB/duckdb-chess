@@ -102,12 +102,11 @@ jobs:
         run: |
           mkdir -p release_assets
           for dir in artifacts/*/; do
-            platform=$(basename "$dir")
+            platform_dir=$(basename "$dir")
+            platform="${platform_dir#${{ env.EXTENSION_NAME }}-}"
             for ext in "$dir"*.duckdb_extension*; do
               [ -f "$ext" ] || continue
-              filename=$(basename "$ext")
-              newname="${filename/.duckdb_extension/-${platform}.duckdb_extension}"
-              cp "$ext" "release_assets/$newname"
+              cp "$ext" "release_assets/${{ env.EXTENSION_NAME }}-${platform}.duckdb_extension"
             done
           done
           ls -la release_assets/

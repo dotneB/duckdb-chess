@@ -121,7 +121,7 @@ jobs:
           tool: cargo-binstall
 
       - name: Install duckdb-slt
-        run: cargo binstall duckdb-slt${{ env.DUCKDB_SLT_PINNED_VERSION }} --locked
+        run: cargo binstall duckdb-slt${{ env.DUCKDB_SLT_PINNED_VERSION }} --locked --force
 
       - name: Download build artifact
         uses: actions/download-artifact@v4
