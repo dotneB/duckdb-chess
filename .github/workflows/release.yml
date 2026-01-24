@@ -1,0 +1,116 @@
+name: Release
+permissions:
+  "contents": "write"
+
+on:
+  pull_request:
+  push:
+    tags:
+      - '**[0-9]+.[0-9]+.[0-9]+*'
+
+env:
+  RUST_TOOLCHAIN: "1.93.0"
+  RUST_MSRV: "1.89.0"
+  EXTENSION_NAME: duckdb_chess
+  DUCKDB_VERSION: "1.4.3"
+  DUCKDB_EXT_TOOLS_PINNED_VERSION: " --git 'https://github.com/dotneB/cargo-duckdb-ext-tools.git' --branch 'fix/windows-build'"
+  DUCKDB_SLT_PINNED_VERSION: ""
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux_amd64
+          
+          # Linux ARM64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            platform: linux_arm64
+          
+          # macOS x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: osx_amd64
+          
+          # macOS ARM64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: osx_arm64
+          
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows_amd64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          toolchain: ${{ env.RUST_MSRV }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Cross-compilation setup for Linux ARM64
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Install cargo-duckdb-ext-tools
+        run: cargo install cargo-duckdb-ext-tools${{ env.DUCKDB_EXT_TOOLS_PINNED_VERSION }} --locked
+
+      - name: Build extension
+        run: cargo duckdb-ext-build -- --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.EXTENSION_NAME }}-${{ matrix.platform }}
+          path: |
+            target/release/${{ env.EXTENSION_NAME }}.duckdb_extension
+          if-no-files-found: error
+
+  publish:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ env.EXTENSION_NAME }}-*
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release_assets
+          for dir in artifacts/*/; do
+            platform=$(basename "$dir")
+            for ext in "$dir"*.duckdb_extension*; do
+              [ -f "$ext" ] || continue
+              filename=$(basename "$ext")
+              newname="${filename/.duckdb_extension/-${platform}.duckdb_extension}"
+              cp "$ext" "release_assets/$newname"
+            done
+          done
+          ls -la release_assets/
+
+      - name: Publish Release
+        run: gh release create "${{ github.ref_name }}" --target "${{ github.sha }}" --title "${{ github.ref_name }}" --notes-file "CHANGELOG.md" release_assets/*
