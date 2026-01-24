@@ -1,3 +1,5 @@
+# Pure Rust CI workflow for building and testing the DuckDB extension
+
 name: CI
 
 on:
