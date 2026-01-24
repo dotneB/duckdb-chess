@@ -1,3 +1,0 @@
-# Cargo alias for local duckdb-ext-tools
-[alias]
-duckdb-ext-build-local = "run --manifest-path ../cargo-duckdb-ext-tools/Cargo.toml --bin cargo-duckdb-ext-build --"
