@@ -3,17 +3,9 @@
 # This Makefile provides convenient aliases for cargo-based builds.
 # All targets are optional - you can use cargo commands directly.
 #
-# Prerequisites:
-#   - Rust toolchain (https://rustup.rs/)
-#   - cargo-duckdb-ext-tools: cargo install cargo-duckdb-ext-tools
-#
-# Usage:
-#   make build          - Build debug extension
-#   make release        - Build release extension  
-#   make test           - Run tests
-#   make clean          - Clean build artifacts
+# Need to run `make install-tools` once to set up the build tools.
 
-.PHONY: all build release test clean install-tools
+.PHONY: all build release test test-release check check-fix clean install-tools dev help
 
 EXTENSION_NAME := duckdb_chess
 
@@ -23,9 +15,10 @@ all: build
 # Install build tools (run once)
 install-tools:
 	@echo "Installing cargo-duckdb-ext-tools..."
-	cargo install cargo-duckdb-ext-tools --path "../cargo-duckdb-ext-tools"
+	cargo install cargo-duckdb-ext-tools --locked --git "https://github.com/dotneB/cargo-duckdb-ext-tools.git" --branch "fix/windows-build"
+#	cargo install cargo-duckdb-ext-tools --path "../cargo-duckdb-ext-tools" --locked
 	@echo "Installing duckdb-sqllogictest-rs..."
-	cargo install duckdb-slt --path "../duckdb-sqllogictest-rs"
+	cargo binstall duckdb-slt --locked
 
 # Build debug extension
 build:
@@ -37,19 +30,19 @@ release:
 	@echo "Building release extension..."
 	cargo duckdb-ext-build -- --release
 
-# Run Rust unit tests
+# Run Rust unit + integration tests
 test: build
 	@echo "Running cargo tests..."
 	cargo test
 	@echo "Running duckdb-slt integration tests..."
-	duckdb-slt.exe -e ./target/debug/duckdb_chess.duckdb_extension -u -w "$(CURDIR)" "$(CURDIR)/test/sql/*.test"
+	duckdb-slt.exe -e ./target/debug/$(EXTENSION_NAME).duckdb_extension -u -w "$(CURDIR)" "$(CURDIR)/test/sql/*.test"
 
-# Run Rust unit tests
+# Run Rust unit + integration tests (release)
 test-release: release
 	@echo "Running cargo tests..."
 	cargo test
 	@echo "Running duckdb-slt integration tests..."
-	duckdb-slt.exe -e ./target/release/duckdb_chess.duckdb_extension -u -w "$(CURDIR)" "$(CURDIR)/test/sql/*.test"
+	duckdb-slt.exe -e ./target/release/$(EXTENSION_NAME).duckdb_extension -u -w "$(CURDIR)" "$(CURDIR)/test/sql/*.test"
 
 check:
 	cargo fmt --check
@@ -71,11 +64,14 @@ dev: build check test
 help:
 	@echo "Available targets:"
 	@echo "  make install-tools  - Install cargo-duckdb-ext-tools (one-time setup)"
+	@echo "  make dev            - Quick build + test cycle"
 	@echo "  make build          - Build debug extension"
 	@echo "  make release        - Build release extension"
-	@echo "  make test           - Run Rust unit tests"
+	@echo "  make test           - Run unit + integration tests (debug)"
+	@echo "  make test-release   - Run unit + integration tests (release)"
+	@echo "  make check          - Run fmt/clippy checks"
+	@echo "  make check-fix      - Auto-fix fmt/clippy issues"
 	@echo "  make clean          - Clean build artifacts"
-	@echo "  make dev            - Quick build + test cycle"
 	@echo ""
 	@echo "Direct cargo commands:"
 	@echo "  cargo duckdb-ext-build                    - Build debug"
