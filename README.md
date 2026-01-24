@@ -1,125 +1,188 @@
 # DuckDB Chess Extension
 
-A DuckDB extension for parsing and analyzing chess games in PGN format. This extension provides SQL-based access to chess game data, compatible with the Lichess database schema.
+A DuckDB extension for parsing and analyzing chess games in PGN format.
+
+The core idea: load raw PGNs into DuckDB via `read_pgn()`, then do opening detection, deduplication, and move/position analysis directly in SQL.
+
+Typical use cases:
+
+- Explore a PGN archive with SQL (filters, aggregates, sampling)
+- Join games to an openings dataset via EPD keys (from `chess_moves_json()` or `chess_fen_epd()`)
+- Deduplicate by normalized mainline (`chess_moves_hash()`)
+
+## Contents
+
+- Quick Start
+- Usage
+- API Reference
+- Testing
+- Development
 
 ## Features
 
-- **Parse PGN files**: Read chess games from PGN files with `read_pgn()`
-- **Query chess data**: Filter games by opening, player, rating, time control, etc.
-- **Movetext manipulation**: Normalize, hash, and extract move sequences
-- **Glob pattern support**: Process multiple PGN files at once
-- **Lichess compatibility**: Schema matches Lichess database exports
+- **Parse PGN files** with `read_pgn()` (single file or glob patterns)
+- **Lichess-style columns** (Event/Site/players/elos/opening/time control/movetext)
+- **Parse diagnostics** via a `parse_error` column (keep going on bad games)
+- **Movetext utilities**: normalize, hash, ply count
+- **Position tracing**: convert movetext into per-ply JSON including FEN/EPD (useful for joining to openings datasets)
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Rust toolchain** (1.88.0 or newer): Install from [rustup.rs](https://rustup.rs/)
+- **Rust toolchain** (1.88.0+): https://rustup.rs/
 - **cargo-duckdb-ext-tools**: `cargo install cargo-duckdb-ext-tools`
-- **DuckDB** (1.4.3+): For testing the extension
+- **DuckDB** (built for 1.4.3; CLI/Python/etc. all work)
 
-That's it! No Python, Make, or other dependencies required.
+### Build
 
-### Building
+Debug:
 
-#### Debug Build
 ```shell
 cargo duckdb-ext-build
 ```
 
-This will:
-1. Compile the extension with `cargo build`
-2. Append DuckDB metadata to create `target/debug/duckdb_chess.duckdb_extension`
+Release:
 
-#### Release Build
 ```shell
 cargo duckdb-ext-build -- --release
 ```
 
-Or use the convenient Makefile wrapper:
+Makefile wrapper (optional):
+
 ```shell
 make release
 ```
 
-The extension will be created at `target/release/duckdb_chess.duckdb_extension`.
+Artifacts:
 
-#### Manual Packaging (Advanced)
+- `target/debug/duckdb_chess.duckdb_extension`
+- `target/release/duckdb_chess.duckdb_extension`
 
-If you need explicit control over extension metadata:
+### Load
 
-```shell
-# Build the library
-cargo build --release
-
-# Package with specific parameters
-cargo duckdb-ext-pack \
-  -i target/release/duckdb_chess.dll \
-  -o target/release/duckdb_chess.duckdb_extension \
-  -v v0.1.0 \
-  -p windows_amd64 \
-  -d v1.4.3
-```
-
-### Loading the Extension
-
-Start DuckDB with the `-unsigned` flag to load local extensions:
+Local builds are unsigned; start DuckDB with `-unsigned`:
 
 ```shell
 duckdb -unsigned
 ```
 
-Then load the extension:
+Then:
 
 ```sql
 LOAD './target/release/duckdb_chess.duckdb_extension';
 ```
 
-### Example Usage
+If you're using DuckDB from another runtime (Python/R/Node), you still load the same extension file; only the connection setup changes.
+
+### Try It (Repo Sample PGNs)
 
 ```sql
--- Load the extension
 LOAD './target/release/duckdb_chess.duckdb_extension';
 
--- Read a PGN file
-SELECT * FROM read_pgn('games.pgn') LIMIT 5;
+SELECT Event, White, Black, Result, Opening
+FROM read_pgn('test/pgn_files/sample.pgn')
+WHERE parse_error IS NULL;
 
--- Read multiple PGN files with glob pattern
-SELECT COUNT(*) FROM read_pgn('lichess_db_*.pgn');
+-- Inspect parse errors (if any)
+SELECT count_if(parse_error IS NULL) AS ok, count_if(parse_error IS NOT NULL) AS bad
+FROM read_pgn('test/pgn_files/parse_errors.pgn');
+```
 
--- Filter by opening
-SELECT Event, White, Black, Result 
+## Usage
+
+### Read PGN
+
+```sql
+LOAD './target/release/duckdb_chess.duckdb_extension';
+
+SELECT Event, White, Black, Result, Opening
 FROM read_pgn('games.pgn')
-WHERE Opening LIKE '%Sicilian%';
+WHERE parse_error IS NULL
+LIMIT 10;
 
--- Normalize movetext (remove annotations)
-SELECT chess_moves_normalize('1. e4 e5 2. Nf3 {A comment} Nc6') AS clean_moves;
--- Result: "e4 e5 Nf3 Nc6"
+-- Glob patterns work too
+SELECT count(*)
+FROM read_pgn('lichess_db_2024-*.pgn');
+```
 
--- Hash movetext for deduplication
-SELECT chess_moves_hash('e4 e5 Nf3 Nc6');
+Notes:
 
--- Convert to JSON
-SELECT chess_moves_json('e4 e5 Nf3 Nc6');
+- Glob expansion currently triggers when `path_pattern` contains `*` or `?`.
+- `movetext` is the mainline only; variations are skipped, `{ ... }` comments are preserved.
+- If a game fails to parse, you still get a row with `parse_error` set.
+- When reading multiple files (via glob), unreadable files are skipped with a warning; a single explicit file path fails hard.
 
--- Convert to JSON with a ply cap (useful for opening detection joins)
-SELECT chess_moves_json('e4 e5 Nf3 Nc6', 40);
+### Clean / Hash / Count Moves
 
--- Convert FEN to the Lichess openings dataset join key (EPD)
-SELECT chess_fen_epd('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1');
+```sql
+SELECT chess_moves_normalize('1. e4! {comment} e5?? $1 2. Nf3') AS clean;
+-- clean = 'e4 e5 Nf3'
 
--- Count plies quickly
-SELECT chess_ply_count('1. e4 e5 2. Nf3');
+SELECT chess_moves_hash('e4 e5 Nf3 Nc6') AS h;          -- BIGINT
+SELECT chess_ply_count('1. e4 e5 2. Nf3') AS ply_count;  -- BIGINT
+```
 
--- Opening detection example (recommended: do this in SQL)
--- Assumes an `openings` table (e.g., loaded from the Lichess openings Parquet) with columns: epd, eco, name, uci
+### Turn Movetext Into Positions (FEN/EPD)
+
+`chess_moves_json()` returns a JSON string (cast to `JSON` if you want to use JSON functions).
+
+```sql
+WITH g AS (
+  SELECT movetext
+  FROM read_pgn('games.pgn')
+  WHERE parse_error IS NULL
+  LIMIT 1
+)
+SELECT
+  json_extract(m.value, '$.ply')::INT AS ply,
+  json_extract_string(m.value, '$.move') AS san,
+  json_extract_string(m.value, '$.fen') AS fen,
+  json_extract_string(m.value, '$.epd') AS epd
+FROM g,
+     json_each(CAST(chess_moves_json(g.movetext, 40) AS JSON)) m;
+```
+
+### DuckDB Python (Example)
+
+```python
+import duckdb
+
+con = duckdb.connect()
+con.execute("LOAD './target/release/duckdb_chess.duckdb_extension'")
+df = con.execute("""
+  SELECT White, Black, Result
+  FROM read_pgn('test/pgn_files/sample.pgn')
+  WHERE parse_error IS NULL
+""").df()
+print(df.head())
+```
+
+### Opening Detection Join (Example)
+
+Assumes an `openings` table with columns `epd`, `eco`, `name`, and a per-opening mainline in `uci`.
+
+If your openings dataset is a Parquet file, a typical setup looks like:
+
+```sql
+CREATE OR REPLACE TABLE openings AS
+SELECT * FROM read_parquet('openings.parquet');
+```
+
+```sql
 WITH params AS (
   SELECT max(array_length(string_split(uci, ' '))) AS max_opening_ply
   FROM openings
 ),
+games AS (
+  SELECT row_number() OVER () AS game_id, movetext
+  FROM read_pgn('games.pgn')
+  WHERE parse_error IS NULL
+),
 pos AS (
   SELECT
     g.game_id,
-    json_extract(m.value, '$.ply')::INTEGER AS ply,
+    json_extract(m.value, '$.ply')::INT AS ply,
     trim(json_extract_string(m.value, '$.epd')) AS epd
   FROM games g,
        params p,
@@ -136,10 +199,50 @@ FROM (
   FROM matches
 )
 WHERE rn = 1;
-
--- Extract move subset
-SELECT chess_moves_subset('e4 e5 Nf3 Nc6 Bb5', 3); -- First 3 moves
 ```
+
+## API Reference
+
+### Table Functions
+
+#### `read_pgn(path_pattern: VARCHAR)`
+
+Reads chess games from one or more PGN files.
+
+`path_pattern` can be a single path or a glob pattern (e.g. `lichess_db_2024-*.pgn`).
+
+Returned columns:
+
+| Column | Type | Notes |
+|---|---|---|
+| Event | VARCHAR | PGN tag |
+| Site | VARCHAR | PGN tag |
+| White | VARCHAR | PGN tag |
+| Black | VARCHAR | PGN tag |
+| Result | VARCHAR | PGN tag |
+| WhiteTitle | VARCHAR | PGN tag (nullable) |
+| BlackTitle | VARCHAR | PGN tag (nullable) |
+| WhiteElo | VARCHAR | PGN tag (nullable) |
+| BlackElo | VARCHAR | PGN tag (nullable) |
+| UTCDate | VARCHAR | PGN tag |
+| UTCTime | VARCHAR | PGN tag |
+| ECO | VARCHAR | PGN tag |
+| Opening | VARCHAR | PGN tag |
+| Termination | VARCHAR | PGN tag |
+| TimeControl | VARCHAR | PGN tag |
+| movetext | VARCHAR | Raw mainline, includes `{...}` comments |
+| parse_error | VARCHAR | NULL on success; error message on failure |
+
+### Scalar Functions
+
+| Function | Returns | Notes |
+|---|---|---|
+| `chess_moves_normalize(movetext)` | VARCHAR | Removes comments/variations/NAGs and normalizes move numbers |
+| `chess_moves_hash(movetext)` | BIGINT | Hash of the normalized movetext |
+| `chess_ply_count(movetext)` | BIGINT | Ply count (NULL-safe macro) |
+| `chess_moves_json(movetext, max_ply := NULL)` | VARCHAR | JSON string of `{ply, move, fen, epd}` (NULL-safe macro) |
+| `chess_fen_epd(fen)` | VARCHAR | Converts FEN to EPD join key (board/side/castling/ep) |
+| `chess_moves_subset(short_movetext, long_movetext)` | BOOLEAN | True if normalized `short` is a prefix of normalized `long` |
 
 ## Testing
 
@@ -149,7 +252,7 @@ SELECT chess_moves_subset('e4 e5 Nf3 Nc6 Bb5', 3); -- First 3 moves
 cargo test
 ```
 
-This runs 20 unit tests covering the core chess parsing and filtering logic.
+This runs Rust unit tests covering the core chess parsing and move analysis logic.
 
 ### Manual Testing
 
@@ -182,8 +285,8 @@ src/
 │   ├── mod.rs          # Extension entry point
 │   ├── reader.rs       # read_pgn() table function
 │   ├── visitor.rs      # PGN parsing logic
-│   ├── moves.rs        # Movetext functions (hash, JSON, subset)
-│   ├── filter.rs       # chess_moves_normalize() function
+│   ├── moves.rs        # Move analysis (JSON, hash, ply count, subset, FEN->EPD)
+│   ├── filter.rs       # Movetext normalization
 │   └── types.rs        # Shared types
 ├── lib.rs              # Crate root
 └── wasm_lib.rs         # WASM target (experimental)
@@ -215,43 +318,13 @@ cargo clean                               # Clean artifacts
 
 ## Version Compatibility
 
-This extension is built for **DuckDB 1.4.3**. The extension includes version metadata and should work with DuckDB 1.4.3.
+This extension is built for **DuckDB 1.4.3**.
 
 **Note**: The old template used `USE_UNSTABLE_C_API=1` which required exact version matching. The modern build system aims for better compatibility, but version matching may still be required depending on DuckDB API changes.
 
 ## Functions Reference
 
-### Table Functions
-
-#### `read_pgn(path_pattern: VARCHAR)`
-
-Reads chess games from PGN files and returns a table with the Lichess schema.
-
-**Columns**: Event, Site, White, Black, Result, WhiteElo, BlackElo, WhiteRatingDiff, BlackRatingDiff, ECO, Opening, TimeControl, Termination, UTCDate, UTCTime, moves
-
-**Example**:
-```sql
-SELECT * FROM read_pgn('games.pgn');
-SELECT * FROM read_pgn('lichess_db_2024-*.pgn'); -- Glob pattern
-```
-
-### Scalar Functions
-
-#### `chess_moves_normalize(movetext: VARCHAR) -> VARCHAR`
-
-Removes annotations, comments, variations, and numeric glyphs from movetext, returning a clean move sequence.
-
-#### `chess_moves_hash(movetext: VARCHAR) -> VARCHAR`
-
-Computes a hash of the normalized move sequence for deduplication.
-
-#### `chess_moves_json(movetext: VARCHAR) -> JSON`
-
-Converts movetext to JSON array format.
-
-#### `chess_moves_subset(movetext: VARCHAR, count: INTEGER) -> VARCHAR`
-
-Extracts the first `count` moves from the movetext.
+This section is kept for historical links; see `API Reference` for the current, accurate function signatures.
 
 ## Architecture
 
@@ -273,7 +346,9 @@ The build system is pure Rust with no Python or Make dependencies required for b
 
 ## License
 
-See LICENSE file for details.
+No `LICENSE` file is currently present in this repository.
+
+If you intend this project to be open source, add a license file and update this section.
 
 ## Acknowledgments
 
