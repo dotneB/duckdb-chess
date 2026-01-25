@@ -57,7 +57,7 @@ test-rs: build-rs
 	duckdb-slt.exe -e ./target/debug/$(EXTENSION_NAME).duckdb_extension -u -w "$(CURDIR)" "$(CURDIR)/test/sql/*.test"
 
 # Run Rust unit + integration tests (release)
-test-release: release-rs
+test-release-rs: release-rs
 	@echo "Running cargo tests..."
 	cargo test
 	@echo "Running duckdb-slt integration tests..."

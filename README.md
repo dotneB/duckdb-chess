@@ -4,35 +4,65 @@ A DuckDB extension for parsing and analyzing chess games in PGN format.
 
 The core idea: load raw PGNs into DuckDB via `read_pgn()`, then do opening detection, deduplication, and move/position analysis directly in SQL.
 
-Typical use cases:
-
-- Explore a PGN archive with SQL (filters, aggregates, sampling)
-- Join games to an openings dataset via EPD keys (from `chess_moves_json()` or `chess_fen_epd()`)
-- Deduplicate by normalized mainline (`chess_moves_hash()`)
-
-## Contents
-
-- Quick Start
-- Usage
-- API Reference
-- Testing
-- Development
 
 ## Features
 
 - **Parse PGN files** with `read_pgn()` (single file or glob patterns)
 - **Lichess-style columns** (Event/Site/players/elos/opening/time control/movetext)
-- **Parse diagnostics** via a `parse_error` column (keep going on bad games)
 - **Movetext utilities**: normalize, hash, ply count
 - **Position tracing**: convert movetext into per-ply JSON including FEN/EPD (useful for joining to openings datasets)
 
 ## Quick Start
 
+```sql
+-- Read a pgn file
+SELECT Event, White, Black, Result, Termination, TimeControl FROM read_pgn('test/pgn_files/sample.pgn');
+
+-- Read multiple pgn files
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/*.pgn');
+
+-- How many games started with 1. e4 e5
+SELECT COUNT_IF(chess_moves_subset('1. e4 e5', movetext))  FROM read_pgn('test/pgn_files/sample.pgn');
+
+-- Removes comments/variations/NAGs and normalizes move numbers
+SELECT chess_moves_normalize(movetext) FROM read_pgn('test/pgn_files/sample.pgn');
+
+-- Hash of the normalized movetext
+SELECT chess_moves_hash('1. e4 e5 2. Nf3 Nc6') AS hash;
+
+-- Ply count
+SELECT chess_ply_count('1. e4 e5 2. Nf3') AS ply;
+
+-- Converts FEN to EPD
+SELECT chess_fen_epd('rnbq1rk1/1pp1bppp/p3pn2/8/2pP4/2N2NP1/PP2PPBP/R1BQ1RK1 w - - 0 8') AS epd;
+
+-- Get the first 40 moves of a game as ply, san and epd
+WITH g AS (
+  SELECT movetext
+  FROM read_pgn('test/pgn_files/sample.pgn')
+  WHERE parse_error IS NULL
+  LIMIT 1
+)
+SELECT
+  json_extract(m.value, '$.ply')::INT AS ply,
+  json_extract_string(m.value, '$.move') AS san,
+  json_extract_string(m.value, '$.epd') AS epd
+FROM g,
+     json_each(CAST(chess_moves_json(g.movetext, 40) AS JSON)) m;
+```
+
+## Development 
 ### Prerequisites
 
-- **Rust toolchain** (1.88.0+): https://rustup.rs/
-- **cargo-duckdb-ext-tools**: `cargo install cargo-duckdb-ext-tools`
-- **DuckDB** (built for 1.4.3; CLI/Python/etc. all work)
+- **Rust toolchain** (1.89+): https://rustup.rs/
+- **DuckDB** built for 1.4.3
+- Run `make install-tools` to install:
+  - **cargo-duckdb-ext-tools**: A Rust-based toolkit for building and packaging DuckDB extensions without Python dependencies
+  - **duckdb-slt**: A Rust-based sqllogictest runner for DuckDB.
+
+#### Note on Python:
+This project migrated to use the [duckdb-ext-rs-template](https://github.com/redraiment/duckdb-ext-rs-template) by [@redraiment](https://github.com/redraiment). This toolset only requires Rust to be installed to build the extension.  
+I do keep the `extension-ci-tools` submodule and the original commands from the [official community template](https://github.com/duckdb/extension-template-rs) in `Makefile` to be able to test in CI if the same build would succeed when submitting to the [Community Extensions Repository](https://github.com/duckdb/community-extensions/). Running any of these commands do require python and python-env.
 
 ### Build
 
@@ -40,18 +70,16 @@ Debug:
 
 ```shell
 cargo duckdb-ext-build
+# or use the wrapper to run (build + check + tests)
+make dev
 ```
 
 Release:
 
 ```shell
 cargo duckdb-ext-build -- --release
-```
-
-Makefile wrapper (optional):
-
-```shell
-make release
+# or use the wrapper
+make release-rs
 ```
 
 Artifacts:
@@ -59,7 +87,7 @@ Artifacts:
 - `target/debug/duckdb_chess.duckdb_extension`
 - `target/release/duckdb_chess.duckdb_extension`
 
-### Load
+#### Load
 
 Local builds are unsigned; start DuckDB with `-unsigned`:
 
@@ -73,21 +101,44 @@ Then:
 LOAD './target/release/duckdb_chess.duckdb_extension';
 ```
 
-If you're using DuckDB from another runtime (Python/R/Node), you still load the same extension file; only the connection setup changes.
+### Rust Unit Tests
 
-### Try It (Repo Sample PGNs)
-
-```sql
-LOAD './target/release/duckdb_chess.duckdb_extension';
-
-SELECT Event, White, Black, Result, Opening
-FROM read_pgn('test/pgn_files/sample.pgn')
-WHERE parse_error IS NULL;
-
--- Inspect parse errors (if any)
-SELECT count_if(parse_error IS NULL) AS ok, count_if(parse_error IS NOT NULL) AS bad
-FROM read_pgn('test/pgn_files/parse_errors.pgn');
+```shell
+cargo test
 ```
+
+This runs Rust unit tests covering the core chess parsing and move analysis logic.
+
+### Integration Tests
+
+```shell
+duckdb-slt.exe -e ./target/debug/$(EXTENSION_NAME).duckdb_extension -u -w "$(CURDIR)" "$(CURDIR)/test/sql/*.test"
+```
+This runs the SQLLogicTest against the tests in `test/sql/`
+
+### Version Compatibility
+
+This extension is built for **DuckDB 1.4.3**.
+
+**Note**: The old template used `USE_UNSTABLE_C_API=1` which required exact version matching. The modern build system aims for better compatibility, but version matching may still be required depending on DuckDB API changes.
+
+### Architecture
+
+This extension uses:
+- **Rust 2024 Edition** for modern language features
+- **duckdb-ext-macros** (0.1.0) for extension macros
+- **cargo-duckdb-ext-tools** for packaging
+- **pgn-reader** (0.28) for PGN parsing
+- **shakmaty** (0.29) for chess logic
+
+The build system is pure Rust with no Python or Make dependencies required for building (though the Makefile is provided for convenience).
+
+### Contributing
+
+1. Make changes to the source code
+2. Run dev wrapper: `make dev`
+3. Bun release wrapper: `make test-release-rs`
+4. Test manually with DuckDB CLI
 
 ## Usage
 
@@ -130,7 +181,7 @@ SELECT chess_ply_count('1. e4 e5 2. Nf3') AS ply_count;  -- BIGINT
 ```sql
 WITH g AS (
   SELECT movetext
-  FROM read_pgn('games.pgn')
+  FROM read_pgn('test/pgn_files/sample.pgn')
   WHERE parse_error IS NULL
   LIMIT 1
 )
@@ -141,21 +192,6 @@ SELECT
   json_extract_string(m.value, '$.epd') AS epd
 FROM g,
      json_each(CAST(chess_moves_json(g.movetext, 40) AS JSON)) m;
-```
-
-### DuckDB Python (Example)
-
-```python
-import duckdb
-
-con = duckdb.connect()
-con.execute("LOAD './target/release/duckdb_chess.duckdb_extension'")
-df = con.execute("""
-  SELECT White, Black, Result
-  FROM read_pgn('test/pgn_files/sample.pgn')
-  WHERE parse_error IS NULL
-""").df()
-print(df.head())
 ```
 
 ### Opening Detection Join (Example)
@@ -244,105 +280,6 @@ Returned columns:
 | `chess_fen_epd(fen)` | VARCHAR | Converts FEN to EPD join key (board/side/castling/ep) |
 | `chess_moves_subset(short_movetext, long_movetext)` | BOOLEAN | True if normalized `short` is a prefix of normalized `long` |
 
-## Testing
-
-### Rust Unit Tests
-
-```shell
-cargo test
-```
-
-This runs Rust unit tests covering the core chess parsing and move analysis logic.
-
-### Manual Testing
-
-Build the extension and test it manually with DuckDB:
-
-```shell
-# Build the extension
-cargo duckdb-ext-build -- --release
-
-# Test with DuckDB CLI
-duckdb -unsigned
-```
-
-Then in DuckDB:
-```sql
-LOAD './target/release/duckdb_chess.duckdb_extension';
-SELECT * FROM read_pgn('test/pgn_files/sample.pgn') LIMIT 5;
-SELECT chess_moves_normalize('1. e4 e5 2. Nf3 {comment} Nc6');
-```
-
-Test PGN files are available in `test/pgn_files/`.
-
-## Development
-
-### Project Structure
-
-```
-src/
-├── chess/
-│   ├── mod.rs          # Extension entry point
-│   ├── reader.rs       # read_pgn() table function
-│   ├── visitor.rs      # PGN parsing logic
-│   ├── moves.rs        # Move analysis (JSON, hash, ply count, subset, FEN->EPD)
-│   ├── filter.rs       # Movetext normalization
-│   └── types.rs        # Shared types
-├── lib.rs              # Crate root
-└── wasm_lib.rs         # WASM target (experimental)
-```
-
-### Available Make Targets
-
-The Makefile provides convenient wrappers around cargo commands:
-
-```shell
-make build          # Build debug extension
-make release        # Build release extension
-make test           # Run Rust unit tests
-make clean          # Clean build artifacts
-make install-tools  # Install cargo-duckdb-ext-tools
-make help           # Show all available targets
-```
-
-### Direct Cargo Commands
-
-You can also use cargo directly:
-
-```shell
-cargo duckdb-ext-build                    # Debug build
-cargo duckdb-ext-build -- --release       # Release build
-cargo test                                # Run tests
-cargo clean                               # Clean artifacts
-```
-
-## Version Compatibility
-
-This extension is built for **DuckDB 1.4.3**.
-
-**Note**: The old template used `USE_UNSTABLE_C_API=1` which required exact version matching. The modern build system aims for better compatibility, but version matching may still be required depending on DuckDB API changes.
-
-## Functions Reference
-
-This section is kept for historical links; see `API Reference` for the current, accurate function signatures.
-
-## Architecture
-
-This extension uses:
-- **Rust 2024 Edition** for modern language features
-- **duckdb-ext-macros** (0.1.0) for extension macros
-- **cargo-duckdb-ext-tools** for packaging
-- **pgn-reader** (0.28) for PGN parsing
-- **shakmaty** (0.29) for chess logic
-
-The build system is pure Rust with no Python or Make dependencies required for building (though the Makefile is provided for convenience).
-
-## Contributing
-
-1. Make changes to the source code
-2. Run tests: `cargo test`
-3. Build the extension: `cargo duckdb-ext-build -- --release`
-4. Test manually with DuckDB CLI
 
 ## License
 
