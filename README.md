@@ -346,9 +346,7 @@ The build system is pure Rust with no Python or Make dependencies required for b
 
 ## License
 
-No `LICENSE` file is currently present in this repository.
-
-If you intend this project to be open source, add a license file and update this section.
+MIT. See `LICENSE`.
 
 ## Acknowledgments
 
