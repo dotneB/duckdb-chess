@@ -72,4 +72,4 @@ check-fix:
 	cargo clippy --fix
 
 # Development helper: run a quick build and test cycle
-dev: build-rs check test-rs
+dev: check build-rs test-rs

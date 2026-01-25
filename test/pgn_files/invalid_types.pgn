@@ -1,0 +1,15 @@
+[Event "Invalid types"]
+[Site "https://lichess.org/abc"]
+[White "TypeTester"]
+[Black "TypeTester2"]
+[Result "1-0"]
+[WhiteElo "abc"]
+[BlackElo "-5"]
+[UTCDate "2024.13.01"]
+[UTCTime "25:00:00"]
+[ECO "C00"]
+[Opening "French Defense"]
+[Termination "Normal"]
+[TimeControl "60+0"]
+
+1. e4 e6 1-0

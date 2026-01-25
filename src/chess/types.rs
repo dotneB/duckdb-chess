@@ -1,4 +1,6 @@
 /// Stores parsed game data from PGN - matches Lichess dataset schema
+use libduckdb_sys::{duckdb_date, duckdb_time_tz};
+
 #[derive(Debug, Clone, Default)]
 pub struct GameRecord {
     // Core game info
@@ -11,12 +13,12 @@ pub struct GameRecord {
     // Player info
     pub white_title: Option<String>,
     pub black_title: Option<String>,
-    pub white_elo: Option<i32>,
-    pub black_elo: Option<i32>,
+    pub white_elo: Option<u32>,
+    pub black_elo: Option<u32>,
 
     // Date/Time
-    pub utc_date: Option<String>,
-    pub utc_time: Option<String>,
+    pub utc_date: Option<duckdb_date>,
+    pub utc_time: Option<duckdb_time_tz>,
 
     // Opening info
     pub eco: Option<String>,

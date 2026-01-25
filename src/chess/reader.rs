@@ -3,6 +3,7 @@ use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
 };
+use libduckdb_sys::{duckdb_date, duckdb_time_tz};
 use std::ffi::CString;
 use std::fs::File;
 use std::path::PathBuf;
@@ -54,10 +55,10 @@ impl VTab for ReadPgnVTab {
             "BlackTitle",
             LogicalTypeHandle::from(LogicalTypeId::Varchar),
         );
-        bind.add_result_column("WhiteElo", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("BlackElo", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("UTCDate", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("UTCTime", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+        bind.add_result_column("WhiteElo", LogicalTypeHandle::from(LogicalTypeId::UInteger));
+        bind.add_result_column("BlackElo", LogicalTypeHandle::from(LogicalTypeId::UInteger));
+        bind.add_result_column("UTCDate", LogicalTypeHandle::from(LogicalTypeId::Date));
+        bind.add_result_column("UTCTime", LogicalTypeHandle::from(LogicalTypeId::TimeTZ));
         bind.add_result_column("ECO", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("Opening", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column(
@@ -233,22 +234,22 @@ impl VTab for ReadPgnVTab {
                         black_title_vec.set_null(i);
                     }
                     if let Some(val) = game.white_elo {
-                        white_elo_vec.insert(i, CString::new(val.to_string())?);
+                        white_elo_vec.as_mut_slice::<u32>()[i] = val;
                     } else {
                         white_elo_vec.set_null(i);
                     }
                     if let Some(val) = game.black_elo {
-                        black_elo_vec.insert(i, CString::new(val.to_string())?);
+                        black_elo_vec.as_mut_slice::<u32>()[i] = val;
                     } else {
                         black_elo_vec.set_null(i);
                     }
-                    if let Some(ref val) = game.utc_date {
-                        utc_date_vec.insert(i, CString::new(val.as_str())?);
+                    if let Some(val) = game.utc_date {
+                        utc_date_vec.as_mut_slice::<duckdb_date>()[i] = val;
                     } else {
                         utc_date_vec.set_null(i);
                     }
-                    if let Some(ref val) = game.utc_time {
-                        utc_time_vec.insert(i, CString::new(val.as_str())?);
+                    if let Some(val) = game.utc_time {
+                        utc_time_vec.as_mut_slice::<duckdb_time_tz>()[i] = val;
                     } else {
                         utc_time_vec.set_null(i);
                     }
@@ -316,6 +317,16 @@ mod tests {
     use super::*;
 
     use std::path::PathBuf;
+
+    fn days_from_civil(year: i32, month: u32, day: u32) -> i32 {
+        let y = year - if month <= 2 { 1 } else { 0 };
+        let era = if y >= 0 { y } else { y - 399 } / 400;
+        let yoe = y - era * 400;
+        let m = month as i32;
+        let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + day as i32 - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        (era * 146097 + doe - 719468) as i32
+    }
 
     #[test]
     fn test_read_pgn_bind_data_creation() {
@@ -450,7 +461,7 @@ mod tests {
 
         // Missing headers should be None
         assert_eq!(game.site, None);
-        assert_eq!(game.utc_date, None);
+        assert!(game.utc_date.is_none());
         assert_eq!(game.eco, None);
         assert_eq!(game.opening, None);
         assert_eq!(game.white_elo, None);
@@ -506,8 +517,15 @@ mod tests {
         assert_eq!(game.black_title.as_deref().unwrap(), "IM");
         assert_eq!(game.eco.as_deref().unwrap(), "B00");
         assert_eq!(game.opening.as_deref().unwrap(), "Test Opening");
-        assert_eq!(game.utc_date.as_deref().unwrap(), "2024.01.01");
-        assert_eq!(game.utc_time.as_deref().unwrap(), "12:00:00");
+
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(2024, 1, 1));
+
+        let utc_time = game.utc_time.unwrap();
+        let micros = 12i64 * 3600 * 1_000_000;
+        let micros_part = (micros as u64) & ((1u64 << 40) - 1);
+        assert_eq!(utc_time.bits, micros_part << 24);
+
         assert_eq!(game.time_control.as_deref().unwrap(), "180+0");
         assert_eq!(game.termination.as_deref().unwrap(), "Normal");
     }

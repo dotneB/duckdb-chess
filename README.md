@@ -258,10 +258,10 @@ Returned columns:
 | Result | VARCHAR | PGN tag |
 | WhiteTitle | VARCHAR | PGN tag (nullable) |
 | BlackTitle | VARCHAR | PGN tag (nullable) |
-| WhiteElo | VARCHAR | PGN tag (nullable) |
-| BlackElo | VARCHAR | PGN tag (nullable) |
-| UTCDate | VARCHAR | PGN tag |
-| UTCTime | VARCHAR | PGN tag |
+| WhiteElo | UINTEGER | PGN tag (nullable) |
+| BlackElo | UINTEGER | PGN tag (nullable) |
+| UTCDate | DATE | PGN tag (nullable) |
+| UTCTime | TIMETZ | PGN tag (nullable, treated as UTC) |
 | ECO | VARCHAR | PGN tag |
 | Opening | VARCHAR | PGN tag |
 | Termination | VARCHAR | PGN tag |

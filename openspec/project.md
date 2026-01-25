@@ -38,6 +38,7 @@ Key features:
 - Use descriptive variable names that reflect chess domain terminology
 - Document public APIs and complex logic with doc comments
 - Keep functions focused and relatively short (favor composition)
+- Use `make dev` as a usefull wrapper that run lint and formatting checks, builds in debug, then the full test suite
 
 ### Architecture Patterns
 - **Extension Entry Point**: Use `#[duckdb_extension]` macro from `duckdb-ext-macros` to define extension initialization
@@ -65,6 +66,8 @@ Key features:
   - Use `make test` to run Rust unit tests.
   - For SQLLogicTest tests, manually load extension in DuckDB and verify functionality.
 - Use sample PGN files in `test/pgn_files/`.
+- Use `make test-rs` for an easy way to build in debug, run the unit tests and run the integration tests
+- Use `make test-release-rs` for an easy way to build in release, run the unit tests and run the integration tests
 
 ### Git Workflow
 - Use descriptive commit messages that explain "why" not just "what"

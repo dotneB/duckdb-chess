@@ -1,4 +1,5 @@
 use super::types::GameRecord;
+use libduckdb_sys::{duckdb_date, duckdb_time_tz};
 use pgn_reader::{Outcome, RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
 use std::fs::File;
 use std::ops::ControlFlow;
@@ -35,8 +36,267 @@ impl GameVisitor {
             .map(|(_, v)| v.clone())
     }
 
+    fn push_error(parse_error: &mut Option<String>, msg: String) {
+        match parse_error {
+            Some(existing) => {
+                existing.push_str("; ");
+                existing.push_str(&msg);
+            }
+            None => {
+                *parse_error = Some(msg);
+            }
+        }
+    }
+
+    fn is_unknown_date(s: &str) -> bool {
+        // Lichess uses "????.??.??" for unknown dates.
+        s.contains('?')
+    }
+
+    // Howard Hinnant's days-from-civil algorithm (proleptic Gregorian).
+    // Returns days since 1970-01-01.
+    fn days_from_civil(year: i32, month: u32, day: u32) -> i32 {
+        let y = year - if month <= 2 { 1 } else { 0 };
+        let era = if y >= 0 { y } else { y - 399 } / 400;
+        let yoe = y - era * 400;
+        let m = month as i32;
+        let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + day as i32 - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        // 719468 is days from civil 0000-03-01 to 1970-01-01.
+        era * 146097 + doe - 719468
+    }
+
+    fn is_leap_year(year: i32) -> bool {
+        (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    }
+
+    fn days_in_month(year: i32, month: u32) -> u32 {
+        match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => {
+                if Self::is_leap_year(year) {
+                    29
+                } else {
+                    28
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    fn parse_date_field(
+        raw: Option<String>,
+        label: &str,
+        parse_error: &mut Option<String>,
+    ) -> Option<duckdb_date> {
+        let raw = raw?;
+        let s = raw.trim();
+        if s.is_empty() {
+            return None;
+        }
+        if Self::is_unknown_date(s) {
+            return None;
+        }
+
+        let parts: Vec<&str> = if s.contains('.') {
+            s.split('.').collect()
+        } else if s.contains('-') {
+            s.split('-').collect()
+        } else {
+            vec![]
+        };
+
+        if parts.len() != 3 {
+            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+            return None;
+        }
+
+        let year: i32 = match parts[0].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                return None;
+            }
+        };
+        let month: u32 = match parts[1].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                return None;
+            }
+        };
+        let day: u32 = match parts[2].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                return None;
+            }
+        };
+
+        if year <= 0 || !(1..=12).contains(&month) {
+            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+            return None;
+        }
+        let dim = Self::days_in_month(year, month);
+        if day < 1 || day > dim {
+            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+            return None;
+        }
+
+        Some(duckdb_date {
+            days: Self::days_from_civil(year, month, day),
+        })
+    }
+
+    fn parse_uinteger_field(
+        raw: Option<String>,
+        label: &str,
+        parse_error: &mut Option<String>,
+    ) -> Option<u32> {
+        let raw = raw?;
+        let s = raw.trim();
+        if s.is_empty() {
+            return None;
+        }
+        match s.parse::<u32>() {
+            Ok(v) => Some(v),
+            Err(_) => {
+                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                None
+            }
+        }
+    }
+
+    fn parse_time_tz_field(
+        raw: Option<String>,
+        label: &str,
+        parse_error: &mut Option<String>,
+    ) -> Option<duckdb_time_tz> {
+        let raw = raw?;
+        let s = raw.trim();
+        if s.is_empty() {
+            return None;
+        }
+
+        // Formats supported:
+        // - HH:MM:SS
+        // - HH:MM:SSZ
+        // - HH:MM:SS+HH:MM
+        // - HH:MM:SS-HH:MM
+        let (time_part, offset_seconds) = if let Some(stripped) = s.strip_suffix('Z') {
+            (stripped, 0i32)
+        } else if let Some((t, off)) = s.split_once('+') {
+            (
+                t,
+                match Self::parse_tz_offset_seconds(off) {
+                    Some(v) => v,
+                    None => {
+                        Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                        return None;
+                    }
+                },
+            )
+        } else if let Some((t, off)) = s.split_once('-') {
+            (
+                t,
+                match Self::parse_tz_offset_seconds(off) {
+                    Some(v) => -v,
+                    None => {
+                        Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                        return None;
+                    }
+                },
+            )
+        } else {
+            (s, 0i32)
+        };
+
+        let parts: Vec<&str> = time_part.split(':').collect();
+        if parts.len() != 3 {
+            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+            return None;
+        }
+        let hh: i64 = match parts[0].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                return None;
+            }
+        };
+        let mm: i64 = match parts[1].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                return None;
+            }
+        };
+        let ss: i64 = match parts[2].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                return None;
+            }
+        };
+
+        if !(0..=23).contains(&hh) || !(0..=59).contains(&mm) || !(0..=59).contains(&ss) {
+            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+            return None;
+        }
+
+        let micros = (hh * 3600 + mm * 60 + ss) * 1_000_000;
+        Some(Self::pack_time_tz(micros, offset_seconds))
+    }
+
+    fn pack_time_tz(micros: i64, offset_seconds: i32) -> duckdb_time_tz {
+        // TIME_TZ is stored as 40 bits for micros, and 24 bits for offset.
+        // Negative offsets are stored as 24-bit two's complement.
+        // DuckDB packs the micros in the high bits.
+        let micros_part = (micros as u64) & ((1u64 << 40) - 1);
+        let offset_part = (offset_seconds as i64 as u64) & ((1u64 << 24) - 1);
+        duckdb_time_tz {
+            bits: (micros_part << 24) | offset_part,
+        }
+    }
+
+    fn parse_tz_offset_seconds(s: &str) -> Option<i32> {
+        let s = s.trim();
+        let (hh, mm) = s.split_once(':')?;
+        let hh: i32 = hh.parse().ok()?;
+        let mm: i32 = mm.parse().ok()?;
+        if !(0..=23).contains(&hh) || !(0..=59).contains(&mm) {
+            return None;
+        }
+        Some(hh * 3600 + mm * 60)
+    }
+
     fn finalize_game(&mut self) {
-        let parse_elo = |s: &str| s.parse::<i32>().ok();
+        let mut parse_error: Option<String> = None;
+
+        let white_elo =
+            Self::parse_uinteger_field(self.get_header("WhiteElo"), "WhiteElo", &mut parse_error);
+        let black_elo =
+            Self::parse_uinteger_field(self.get_header("BlackElo"), "BlackElo", &mut parse_error);
+
+        let utc_date_raw = self
+            .get_header("UTCDate")
+            .or_else(|| self.get_header("Date"));
+        let utc_date_label = if self.get_header("UTCDate").is_some() {
+            "UTCDate"
+        } else {
+            "UTCDate (from Date)"
+        };
+        let utc_date = Self::parse_date_field(utc_date_raw, utc_date_label, &mut parse_error);
+
+        let utc_time_raw = self
+            .get_header("UTCTime")
+            .or_else(|| self.get_header("Time"));
+        let utc_time_label = if self.get_header("UTCTime").is_some() {
+            "UTCTime"
+        } else {
+            "UTCTime (from Time)"
+        };
+        let utc_time = Self::parse_time_tz_field(utc_time_raw, utc_time_label, &mut parse_error);
 
         self.current_game = Some(GameRecord {
             event: self.get_header("Event"),
@@ -48,26 +308,47 @@ impl GameVisitor {
                 .or_else(|| self.result_marker.clone()),
             white_title: self.get_header("WhiteTitle"),
             black_title: self.get_header("BlackTitle"),
-            white_elo: self.get_header("WhiteElo").and_then(|s| parse_elo(&s)),
-            black_elo: self.get_header("BlackElo").and_then(|s| parse_elo(&s)),
-            utc_date: self
-                .get_header("UTCDate")
-                .or_else(|| self.get_header("Date")),
-            utc_time: self
-                .get_header("UTCTime")
-                .or_else(|| self.get_header("Time")),
+            white_elo,
+            black_elo,
+            utc_date,
+            utc_time,
             eco: self.get_header("ECO"),
             opening: self.get_header("Opening"),
             termination: self.get_header("Termination"),
             time_control: self.get_header("TimeControl"),
             movetext: self.movetext_buffer.trim().to_string(),
-            parse_error: None,
+            parse_error,
         });
     }
 
     /// Spec: pgn-parsing - Error Message Capture
     pub fn finalize_game_with_error(&mut self, error_msg: String) {
-        let parse_elo = |s: &str| s.parse::<i32>().ok();
+        let mut parse_error: Option<String> = Some(error_msg);
+
+        let white_elo =
+            Self::parse_uinteger_field(self.get_header("WhiteElo"), "WhiteElo", &mut parse_error);
+        let black_elo =
+            Self::parse_uinteger_field(self.get_header("BlackElo"), "BlackElo", &mut parse_error);
+
+        let utc_date_raw = self
+            .get_header("UTCDate")
+            .or_else(|| self.get_header("Date"));
+        let utc_date_label = if self.get_header("UTCDate").is_some() {
+            "UTCDate"
+        } else {
+            "UTCDate (from Date)"
+        };
+        let utc_date = Self::parse_date_field(utc_date_raw, utc_date_label, &mut parse_error);
+
+        let utc_time_raw = self
+            .get_header("UTCTime")
+            .or_else(|| self.get_header("Time"));
+        let utc_time_label = if self.get_header("UTCTime").is_some() {
+            "UTCTime"
+        } else {
+            "UTCTime (from Time)"
+        };
+        let utc_time = Self::parse_time_tz_field(utc_time_raw, utc_time_label, &mut parse_error);
 
         self.current_game = Some(GameRecord {
             event: self.get_header("Event"),
@@ -79,20 +360,16 @@ impl GameVisitor {
                 .or_else(|| self.result_marker.clone()),
             white_title: self.get_header("WhiteTitle"),
             black_title: self.get_header("BlackTitle"),
-            white_elo: self.get_header("WhiteElo").and_then(|s| parse_elo(&s)),
-            black_elo: self.get_header("BlackElo").and_then(|s| parse_elo(&s)),
-            utc_date: self
-                .get_header("UTCDate")
-                .or_else(|| self.get_header("Date")),
-            utc_time: self
-                .get_header("UTCTime")
-                .or_else(|| self.get_header("Time")),
+            white_elo,
+            black_elo,
+            utc_date,
+            utc_time,
             eco: self.get_header("ECO"),
             opening: self.get_header("Opening"),
             termination: self.get_header("Termination"),
             time_control: self.get_header("TimeControl"),
             movetext: self.movetext_buffer.trim().to_string(),
-            parse_error: Some(error_msg),
+            parse_error,
         });
     }
 }

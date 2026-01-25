@@ -1,0 +1,24 @@
+# name: test/sql/read_pgn_type_conversions.test
+# description: Test typed conversions and conversion error reporting in read_pgn
+# group: [read_pgn]
+
+# require duckdb_chess
+
+# Non-fatal conversion failures should still output the row.
+query I
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/invalid_types.pgn');
+----
+1
+
+# Invalid-but-non-empty values become NULL and produce parse_error messages.
+query IIIII
+SELECT
+  WhiteElo IS NULL,
+  BlackElo IS NULL,
+  UTCDate IS NULL,
+  UTCTime IS NULL,
+  parse_error
+FROM read_pgn('test/pgn_files/invalid_types.pgn')
+LIMIT 1;
+----
+true	true	true	true	Conversion error: WhiteElo='abc'; Conversion error: BlackElo='-5'; Conversion error: UTCDate='2024.13.01'; Conversion error: UTCTime='25:00:00'
