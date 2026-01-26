@@ -28,7 +28,7 @@ ORDER BY Event;
 ----
 Game with some missing fields	NULL	White Player	Black Player	1/2-1/2	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	1. e4 e5
 Minimal game	?	?	?	*	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	1. d4 d5
-Test with all headers	https://example.com	Player A	Player B	1-0	GM	IM	2000	1900	2024-01-01	12:00:00	B00	Test Opening	Normal	180+0	1. e4 e5 2. Nf3 Nc6
+Test with all headers	https://example.com	Player A	Player B	1-0	GM	IM	2000	1900	2024-01-01	12:00:00+00	B00	Test Opening	Normal	180+0	1. e4 e5 2. Nf3 Nc6
 
 # Test NULL detection for specific fields
 query I
