@@ -1,3 +1,32 @@
+## [0.1.1] - 2026-01-26
+
+### 🚀 Features
+
+- Duckdb-slt@0.1.3 now support require keyword
+
+### 🐛 Bug Fixes
+
+- Returned types for WhiteElo, BlackElo, UTCDate, UTCTime as their proper types
+- UTCtime parsing
+
+### 🚜 Refactor
+
+- Renamed extension to chess
+
+### 📚 Documentation
+
+- LICENSE in readme
+- Simplify README.md
+
+### 🧪 Testing
+
+- Fix expected columns
+- Change expected value for the UTCTime TIMETZ includes the tz
+- Communit flow with tests enabled
+
+### ⚙️ Miscellaneous Tasks
+
+- Generate notes for the release
 ## [0.1.0] - 2026-01-24
 
 ### 🚀 Features
@@ -22,6 +51,7 @@
 
 ### 📚 Documentation
 
+- Add "Running the extension" section to README
 - Update README.md
 
 ### ⚙️ Miscellaneous Tasks
@@ -34,3 +64,7 @@
 - Add LICENSE
 - Pin dependencies
 - Community github workflow is optional
+- Release process
+- Release 0.1.0
+- Fix gh token usage
+- Fix extension names in release
