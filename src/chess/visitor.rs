@@ -1,5 +1,14 @@
 use super::types::GameRecord;
+#[cfg(not(test))]
+use libduckdb_sys::duckdb_create_time_tz;
 use libduckdb_sys::{duckdb_date, duckdb_time_tz};
+
+#[cfg(not(test))]
+#[inline]
+fn create_time_tz(micros: i64, offset_seconds: i32) -> duckdb_time_tz {
+    // SAFETY: Only called inside DuckDB (API initialized).
+    unsafe { duckdb_create_time_tz(micros, offset_seconds) }
+}
 use pgn_reader::{Outcome, RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
 use std::fs::File;
 use std::ops::ControlFlow;
@@ -248,12 +257,19 @@ impl GameVisitor {
         Some(Self::pack_time_tz(micros, offset_seconds))
     }
 
+    #[cfg(not(test))]
     fn pack_time_tz(micros: i64, offset_seconds: i32) -> duckdb_time_tz {
-        // TIME_TZ is stored as 40 bits for micros, and 24 bits for offset.
-        // Negative offsets are stored as 24-bit two's complement.
-        // DuckDB packs the micros in the high bits.
+        create_time_tz(micros, offset_seconds)
+    }
+
+    #[cfg(test)]
+    fn pack_time_tz(micros: i64, offset_seconds: i32) -> duckdb_time_tz {
+        // Unit tests run without DuckDB initializing the C API.
+        const OFFSET_SENTINEL_SECONDS: i32 = 16 * 60 * 60 - 1; // 15:59:59
+        let encoded_offset = OFFSET_SENTINEL_SECONDS - offset_seconds;
+
         let micros_part = (micros as u64) & ((1u64 << 40) - 1);
-        let offset_part = (offset_seconds as i64 as u64) & ((1u64 << 24) - 1);
+        let offset_part = (encoded_offset as i64 as u64) & ((1u64 << 24) - 1);
         duckdb_time_tz {
             bits: (micros_part << 24) | offset_part,
         }

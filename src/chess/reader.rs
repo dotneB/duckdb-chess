@@ -524,7 +524,8 @@ mod tests {
         let utc_time = game.utc_time.unwrap();
         let micros = 12i64 * 3600 * 1_000_000;
         let micros_part = (micros as u64) & ((1u64 << 40) - 1);
-        assert_eq!(utc_time.bits, micros_part << 24);
+        let offset_sentinel = (16u64 * 60 * 60) - 1; // 15:59:59 encodes +00:00
+        assert_eq!(utc_time.bits, (micros_part << 24) | offset_sentinel);
 
         assert_eq!(game.time_control.as_deref().unwrap(), "180+0");
         assert_eq!(game.termination.as_deref().unwrap(), "Normal");
