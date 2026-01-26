@@ -84,8 +84,8 @@ make release-rs
 
 Artifacts:
 
-- `target/debug/duckdb_chess.duckdb_extension`
-- `target/release/duckdb_chess.duckdb_extension`
+- `target/debug/chess.duckdb_extension`
+- `target/release/chess.duckdb_extension`
 
 #### Load
 
@@ -98,7 +98,7 @@ duckdb -unsigned
 Then:
 
 ```sql
-LOAD './target/release/duckdb_chess.duckdb_extension';
+LOAD './target/release/chess.duckdb_extension';
 ```
 
 ### Rust Unit Tests
@@ -145,7 +145,7 @@ The build system is pure Rust with no Python or Make dependencies required for b
 ### Read PGN
 
 ```sql
-LOAD './target/release/duckdb_chess.duckdb_extension';
+LOAD './target/release/chess.duckdb_extension';
 
 SELECT Event, White, Black, Result, Opening
 FROM read_pgn('games.pgn')

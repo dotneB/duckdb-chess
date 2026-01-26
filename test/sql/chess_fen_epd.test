@@ -2,7 +2,7 @@
 # description: Test chess_fen_epd scalar function
 # group: [chess_fen_epd]
 
-require duckdb_chess
+require chess
 
 query I
 SELECT chess_fen_epd('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');

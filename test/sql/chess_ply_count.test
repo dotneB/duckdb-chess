@@ -2,7 +2,7 @@
 # description: Test chess_ply_count scalar function
 # group: [chess_ply_count]
 
-require duckdb_chess
+require chess
 
 query I
 SELECT chess_ply_count('1. e4 e5 2. Nf3');

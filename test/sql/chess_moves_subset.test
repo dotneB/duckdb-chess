@@ -2,7 +2,7 @@
 # description: Test chess_moves_subset scalar function (Spec: move-analysis - Subsumption Detection)
 # group: [chess_moves_subset]
 
-require duckdb_chess
+require chess
 
 # Test exact subset - short is prefix of long
 query I

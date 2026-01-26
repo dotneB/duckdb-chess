@@ -2,7 +2,7 @@
 # description: Test typed conversions and conversion error reporting in read_pgn
 # group: [read_pgn]
 
-require duckdb_chess
+require chess
 
 # Non-fatal conversion failures should still output the row.
 query I

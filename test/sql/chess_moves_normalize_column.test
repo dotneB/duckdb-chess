@@ -2,7 +2,7 @@
 # description: Test chess_moves_normalize function on columns
 # group: [chess_moves_normalize]
 
-require duckdb_chess
+require chess
 
 statement ok
 CREATE TABLE games (id INT, movetext VARCHAR);

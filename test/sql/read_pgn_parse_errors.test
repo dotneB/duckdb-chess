@@ -2,7 +2,7 @@
 # description: Test parse_error column for game diagnostics (Spec: data-schema - Parse Error Column)
 # group: [read_pgn]
 
-require duckdb_chess
+require chess
 
 # Test that parse_error column exists
 query IIIIII

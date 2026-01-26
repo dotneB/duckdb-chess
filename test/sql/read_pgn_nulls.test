@@ -2,7 +2,7 @@
 # description: Test NULL value handling in read_pgn (Spec: data-schema - NULL Value Handling)
 # group: [read_pgn]
 
-require duckdb_chess
+require chess
 
 # Test that missing headers result in NULL values, not empty strings
 query IIIIIIIIIIIIIIII

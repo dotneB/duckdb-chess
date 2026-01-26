@@ -47,7 +47,7 @@ The project MUST use the modern `#[duckdb_extension]` macro for the extension en
 
 #### Scenario: Modern macro usage
 Given the `extension_entrypoint` function
-It must use `#[duckdb_extension(name = "duckdb_chess", api_version = "v1.0.0")]` macro
+It must use `#[duckdb_extension(name = "chess", api_version = "v1.0.0")]` macro
 And it must not use the legacy `#[duckdb_entrypoint_c_api]` macro
 
 ### Requirement: Unit Test Support

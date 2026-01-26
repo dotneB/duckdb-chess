@@ -23,7 +23,7 @@ concurrency:
 env:
   RUST_TOOLCHAIN: "1.93.0"
   RUST_MSRV: "1.89.0"
-  EXTENSION_NAME: duckdb_chess
+  EXTENSION_NAME: chess
   DUCKDB_VERSION: "1.4.3"
   DUCKDB_EXT_TOOLS_PINNED_VERSION: " --git 'https://github.com/dotneB/cargo-duckdb-ext-tools.git' --branch 'fix/windows-build'"
   DUCKDB_SLT_PINNED_VERSION: ""

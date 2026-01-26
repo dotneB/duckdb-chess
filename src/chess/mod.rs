@@ -14,7 +14,7 @@ use moves::{
 use reader::ReadPgnVTab;
 use std::error::Error;
 
-#[duckdb_extension(name = "duckdb_chess", api_version = "v1.0.0")]
+#[duckdb_extension(name = "chess", api_version = "v1.0.0")]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
     // Table functions
     con.register_table_function::<ReadPgnVTab>("read_pgn")?;
