@@ -2,7 +2,7 @@
 # description: Test error handling and edge cases in read_pgn (Spec: pgn-parsing - Malformed Game Handling)
 # group: [read_pgn]
 
-# require duckdb_chess
+require duckdb_chess
 
 # Test empty PGN file (Spec: pgn-parsing - Empty result for non-existent files)
 query I

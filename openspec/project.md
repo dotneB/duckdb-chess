@@ -54,7 +54,7 @@ Key features:
 
 ### Testing Strategy
 - Tests are written in SQLLogicTest format (.test files in `test/sql/`)
-- Test files must start with `# require duckdb_chess` to load the extension
+- Test files must start with `require duckdb_chess` to load the extension
 - Test categories:
   - Schema validation (DESCRIBE queries)
   - Row count verification

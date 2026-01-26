@@ -2,7 +2,7 @@
 # description: Test read_pgn with specific invalid UTF-8 byte from user report
 # group: [chess]
 
-# require duckdb_chess
+require duckdb_chess
 
 # Test reading the file with invalid UTF-8 (byte 0x90)
 # Should replace 0x90 with replacement char (EF BF BD in UTF-8)

@@ -2,7 +2,7 @@
 # description: Test chess_moves_json scalar function
 # group: [chess_moves_json]
 
-# require duckdb_chess
+require duckdb_chess
 
 # Test basic moves
 query I

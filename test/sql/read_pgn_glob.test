@@ -3,7 +3,7 @@
 # group: [read_pgn]
 
 # Load extension
-# require duckdb_chess
+require duckdb_chess
 
 # Test glob pattern matching multiple files
 query III
