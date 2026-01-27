@@ -55,7 +55,7 @@ FROM g,
 ### Prerequisites
 
 - **Rust toolchain** (1.89+): https://rustup.rs/
-- **DuckDB** built for 1.4.3
+- **DuckDB** built for 1.4.4
 - Run `make install-tools` to install:
   - **cargo-duckdb-ext-tools**: A Rust-based toolkit for building and packaging DuckDB extensions without Python dependencies
   - **duckdb-slt**: A Rust-based sqllogictest runner for DuckDB.
@@ -118,7 +118,7 @@ This runs the SQLLogicTest against the tests in `test/sql/`
 
 ### Version Compatibility
 
-This extension is built for **DuckDB 1.4.3**.
+This extension is built for **DuckDB 1.4.4**.
 
 **Note**: The old template used `USE_UNSTABLE_C_API=1` which required exact version matching. The modern build system aims for better compatibility, but version matching may still be required depending on DuckDB API changes.
 

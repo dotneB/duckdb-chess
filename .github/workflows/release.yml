@@ -3,7 +3,6 @@ permissions:
   "contents": "write"
 
 on:
-  pull_request:
   push:
     tags:
       - '**[0-9]+.[0-9]+.[0-9]+*'
@@ -12,9 +11,9 @@ env:
   RUST_TOOLCHAIN: "1.93.0"
   RUST_MSRV: "1.89.0"
   EXTENSION_NAME: chess
-  DUCKDB_VERSION: "1.4.3"
+  DUCKDB_VERSION: "1.4.4"
   DUCKDB_EXT_TOOLS_PINNED_VERSION: " --git 'https://github.com/dotneB/cargo-duckdb-ext-tools.git' --branch 'fix/windows-build'"
-  DUCKDB_SLT_PINNED_VERSION: ""
+  DUCKDB_SLT_PINNED_VERSION: "@0.1.6"
 
 jobs:
   build:
