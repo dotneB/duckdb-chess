@@ -24,9 +24,9 @@ env:
   RUST_TOOLCHAIN: "1.93.0"
   RUST_MSRV: "1.89.0"
   EXTENSION_NAME: chess
-  DUCKDB_VERSION: "1.4.3"
+  DUCKDB_VERSION: "1.4.4"
   DUCKDB_EXT_TOOLS_PINNED_VERSION: " --git 'https://github.com/dotneB/cargo-duckdb-ext-tools.git' --branch 'fix/windows-build'"
-  DUCKDB_SLT_PINNED_VERSION: ""
+  DUCKDB_SLT_PINNED_VERSION: "@0.1.6"
 
 jobs:
   build:
@@ -111,11 +111,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install DuckDB CLI
-        run: |
-          curl --silent --show-error --fail https://install.duckdb.org | sh
-          echo "$HOME/.duckdb/cli/latest" >> $GITHUB_PATH
-
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-binstall
@@ -132,7 +127,6 @@ jobs:
         run: |
           EXT_PATH=$(find . -name "*.duckdb_extension" | head -n 1)
           echo "Testing extension: $EXT_PATH"
-          duckdb -unsigned -c "LOAD '$EXT_PATH'; SELECT * FROM duckdb_extensions() WHERE extension_name = '${{ env.EXTENSION_NAME }}';"
           duckdb-slt -e "$EXT_PATH" -u -w "$PWD" "$PWD/test/sql/*.test"
 
   lint:
