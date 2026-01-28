@@ -15,6 +15,6 @@ strip = true
 duckdb = { version = "=1.4.4", features = ["vtab-loadable", "vscalar"] }
 duckdb-ext-macros = "0.1.0"
 libduckdb-sys = { version = "=1.4.4", features = ["loadable-extension"] }
-pgn-reader = "0.28"
-shakmaty = "0.29"
+pgn-reader = "0.29"
+shakmaty = "0.30"
 glob = "0.3"
