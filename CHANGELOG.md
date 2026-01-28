@@ -3,12 +3,10 @@
 ### 🚀 Features
 
 - Bump duckdb to 1.4.4
-
 ## [0.1.1] - 2026-01-26
 
 ### 🚀 Features
 
-- Pin duckdb to 1.4.3
 - Duckdb-slt@0.1.3 now support require keyword
 
 ### 🐛 Bug Fixes
@@ -34,7 +32,6 @@
 ### ⚙️ Miscellaneous Tasks
 
 - Generate notes for the release
-- Release 0.1.1
 ## [0.1.0] - 2026-01-24
 
 ### 🚀 Features
@@ -59,7 +56,6 @@
 
 ### 📚 Documentation
 
-- Add "Running the extension" section to README
 - Update README.md
 
 ### ⚙️ Miscellaneous Tasks
@@ -73,6 +69,5 @@
 - Pin dependencies
 - Community github workflow is optional
 - Release process
-- Release 0.1.0
 - Fix gh token usage
 - Fix extension names in release

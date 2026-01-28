@@ -20,3 +20,4 @@ duckdb_unittest_tempdir
 /test/bin
 *.duckdb
 *.csv
+WORKBENCH.*
