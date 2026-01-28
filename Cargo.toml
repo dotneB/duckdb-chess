@@ -18,3 +18,4 @@ libduckdb-sys = { version = "=1.4.4", features = ["loadable-extension"] }
 pgn-reader = "0.29"
 shakmaty = "0.30"
 glob = "0.3"
+chrono = { version = "0.4", default-features = false, features = ["alloc", "std"] }

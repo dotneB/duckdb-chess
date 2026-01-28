@@ -3,6 +3,8 @@ use super::types::GameRecord;
 use libduckdb_sys::duckdb_create_time_tz;
 use libduckdb_sys::{duckdb_date, duckdb_time_tz};
 
+use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
+
 #[cfg(not(test))]
 #[inline]
 fn create_time_tz(micros: i64, offset_seconds: i32) -> duckdb_time_tz {
@@ -57,41 +59,76 @@ impl GameVisitor {
         }
     }
 
-    fn is_unknown_date(s: &str) -> bool {
-        // Lichess uses "????.??.??" for unknown dates.
-        s.contains('?')
+    fn normalize_date_separators(s: &str) -> String {
+        let s = s.trim();
+        if s.contains('.') {
+            s.replace('.', "-")
+        } else {
+            s.to_string()
+        }
     }
 
-    // Howard Hinnant's days-from-civil algorithm (proleptic Gregorian).
-    // Returns days since 1970-01-01.
-    fn days_from_civil(year: i32, month: u32, day: u32) -> i32 {
-        let y = year - if month <= 2 { 1 } else { 0 };
-        let era = if y >= 0 { y } else { y - 399 } / 400;
-        let yoe = y - era * 400;
-        let m = month as i32;
-        let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + day as i32 - 1;
-        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-        // 719468 is days from civil 0000-03-01 to 1970-01-01.
-        era * 146097 + doe - 719468
+    fn date_completeness_score(raw: &str) -> u8 {
+        let s = raw.trim();
+        if s.is_empty() {
+            return 0;
+        }
+
+        let norm = Self::normalize_date_separators(s);
+        let parts: Vec<&str> = norm.split('-').collect();
+        if parts.len() != 3 {
+            return 0;
+        }
+
+        let year_known = !parts[0].contains('?') && parts[0].parse::<i32>().ok().is_some();
+        if !year_known {
+            return 0;
+        }
+
+        let mut score = 1u8;
+        let month_known = !parts[1].contains('?') && parts[1].parse::<u32>().ok().is_some();
+        let day_known = !parts[2].contains('?') && parts[2].parse::<u32>().ok().is_some();
+        if month_known {
+            score += 1;
+        }
+        if day_known {
+            score += 1;
+        }
+        score
     }
 
-    fn is_leap_year(year: i32) -> bool {
-        (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
-    }
+    fn select_best_date_candidate(
+        utc_date: Option<String>,
+        date: Option<String>,
+        event_date: Option<String>,
+    ) -> Option<(String, &'static str)> {
+        // Choose by completeness first; if tied, prefer header precedence:
+        // UTCDate -> Date -> EventDate
+        let mut best: Option<(u8, u8, String, &'static str)> = None;
 
-    fn days_in_month(year: i32, month: u32) -> u32 {
-        match month {
-            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-            4 | 6 | 9 | 11 => 30,
-            2 => {
-                if Self::is_leap_year(year) {
-                    29
-                } else {
-                    28
+        for (precedence, raw, label) in [
+            (0u8, utc_date, "UTCDate"),
+            (1u8, date, "UTCDate (from Date)"),
+            (2u8, event_date, "UTCDate (from EventDate)"),
+        ] {
+            let Some(raw) = raw else { continue };
+            let s = raw.trim();
+            if s.is_empty() {
+                continue;
+            }
+
+            let score = Self::date_completeness_score(s);
+            match &best {
+                None => best = Some((score, precedence, raw, label)),
+                Some((best_score, best_prec, _, _)) => {
+                    if score > *best_score || (score == *best_score && precedence < *best_prec) {
+                        best = Some((score, precedence, raw, label));
+                    }
                 }
             }
-            _ => 0,
         }
+
+        best.map(|(_, _, raw, label)| (raw, label))
     }
 
     fn parse_date_field(
@@ -104,58 +141,88 @@ impl GameVisitor {
         if s.is_empty() {
             return None;
         }
-        if Self::is_unknown_date(s) {
-            return None;
-        }
 
-        let parts: Vec<&str> = if s.contains('.') {
-            s.split('.').collect()
-        } else if s.contains('-') {
-            s.split('-').collect()
-        } else {
-            vec![]
-        };
-
+        let norm = Self::normalize_date_separators(s);
+        let parts: Vec<&str> = norm.split('-').collect();
         if parts.len() != 3 {
-            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+            match NaiveDate::parse_from_str(&norm, "%Y-%m-%d") {
+                Ok(_) => {
+                    // Should not happen if split failed, but keep a consistent error message.
+                    Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                }
+                Err(e) => {
+                    Self::push_error(
+                        parse_error,
+                        format!("Conversion error: {label}='{s}' (chrono: {e})"),
+                    );
+                }
+            }
             return None;
         }
 
-        let year: i32 = match parts[0].parse() {
-            Ok(v) => v,
-            Err(_) => {
-                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
-                return None;
-            }
+        // Unknown year => unknown date (NULL) without a conversion error.
+        if parts[0].contains('?') {
+            return None;
+        }
+
+        let year_s = parts[0];
+        let month_s = if parts[1].contains('?') {
+            "01"
+        } else {
+            parts[1]
         };
-        let month: u32 = match parts[1].parse() {
-            Ok(v) => v,
-            Err(_) => {
-                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
-                return None;
-            }
+        let day_s = if parts[2].contains('?') {
+            "01"
+        } else {
+            parts[2]
         };
-        let day: u32 = match parts[2].parse() {
+
+        let full = format!("{year_s}-{month_s}-{day_s}");
+
+        let date = match NaiveDate::parse_from_str(&full, "%Y-%m-%d") {
             Ok(v) => v,
-            Err(_) => {
-                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+            Err(e) => {
+                Self::push_error(
+                    parse_error,
+                    format!("Conversion error: {label}='{s}' (chrono: {e})"),
+                );
                 return None;
             }
         };
 
-        if year <= 0 || !(1..=12).contains(&month) {
-            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
-            return None;
-        }
-        let dim = Self::days_in_month(year, month);
-        if day < 1 || day > dim {
-            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+        if date.year() <= 0 {
+            Self::push_error(
+                parse_error,
+                format!("Conversion error: {label}='{s}' (chrono: year must be >= 1)"),
+            );
             return None;
         }
 
-        Some(duckdb_date {
-            days: Self::days_from_civil(year, month, day),
-        })
+        let epoch = match NaiveDate::from_ymd_opt(1970, 1, 1) {
+            Some(v) => v,
+            None => {
+                // Should never happen.
+                Self::push_error(
+                    parse_error,
+                    "Conversion error: failed to create epoch".into(),
+                );
+                return None;
+            }
+        };
+
+        let days_i64 = date.signed_duration_since(epoch).num_days();
+        let days: i32 = match i32::try_from(days_i64) {
+            Ok(v) => v,
+            Err(_) => {
+                Self::push_error(
+                    parse_error,
+                    format!("Conversion error: {label}='{s}' (chrono: date out of range)"),
+                );
+                return None;
+            }
+        };
+
+        Some(duckdb_date { days })
     }
 
     fn parse_uinteger_field(
@@ -221,39 +288,19 @@ impl GameVisitor {
             (s, 0i32)
         };
 
-        let parts: Vec<&str> = time_part.split(':').collect();
-        if parts.len() != 3 {
-            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
-            return None;
-        }
-        let hh: i64 = match parts[0].parse() {
+        let time = match NaiveTime::parse_from_str(time_part, "%H:%M:%S") {
             Ok(v) => v,
-            Err(_) => {
-                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
-                return None;
-            }
-        };
-        let mm: i64 = match parts[1].parse() {
-            Ok(v) => v,
-            Err(_) => {
-                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
-                return None;
-            }
-        };
-        let ss: i64 = match parts[2].parse() {
-            Ok(v) => v,
-            Err(_) => {
-                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+            Err(e) => {
+                Self::push_error(
+                    parse_error,
+                    format!("Conversion error: {label}='{s}' (chrono: {e})"),
+                );
                 return None;
             }
         };
 
-        if !(0..=23).contains(&hh) || !(0..=59).contains(&mm) || !(0..=59).contains(&ss) {
-            Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
-            return None;
-        }
-
-        let micros = (hh * 3600 + mm * 60 + ss) * 1_000_000;
+        let micros = (time.num_seconds_from_midnight() as i64) * 1_000_000
+            + (time.nanosecond() as i64) / 1_000;
         Some(Self::pack_time_tz(micros, offset_seconds))
     }
 
@@ -294,13 +341,14 @@ impl GameVisitor {
         let black_elo =
             Self::parse_uinteger_field(self.get_header("BlackElo"), "BlackElo", &mut parse_error);
 
-        let utc_date_raw = self
-            .get_header("UTCDate")
-            .or_else(|| self.get_header("Date"));
-        let utc_date_label = if self.get_header("UTCDate").is_some() {
-            "UTCDate"
-        } else {
-            "UTCDate (from Date)"
+        let utc_date_candidate = Self::select_best_date_candidate(
+            self.get_header("UTCDate"),
+            self.get_header("Date"),
+            self.get_header("EventDate"),
+        );
+        let (utc_date_raw, utc_date_label) = match utc_date_candidate {
+            Some((raw, label)) => (Some(raw), label),
+            None => (None, "UTCDate"),
         };
         let utc_date = Self::parse_date_field(utc_date_raw, utc_date_label, &mut parse_error);
 
@@ -346,13 +394,14 @@ impl GameVisitor {
         let black_elo =
             Self::parse_uinteger_field(self.get_header("BlackElo"), "BlackElo", &mut parse_error);
 
-        let utc_date_raw = self
-            .get_header("UTCDate")
-            .or_else(|| self.get_header("Date"));
-        let utc_date_label = if self.get_header("UTCDate").is_some() {
-            "UTCDate"
-        } else {
-            "UTCDate (from Date)"
+        let utc_date_candidate = Self::select_best_date_candidate(
+            self.get_header("UTCDate"),
+            self.get_header("Date"),
+            self.get_header("EventDate"),
+        );
+        let (utc_date_raw, utc_date_label) = match utc_date_candidate {
+            Some((raw, label)) => (Some(raw), label),
+            None => (None, "UTCDate"),
         };
         let utc_date = Self::parse_date_field(utc_date_raw, utc_date_label, &mut parse_error);
 

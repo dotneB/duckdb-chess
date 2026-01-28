@@ -11,14 +11,18 @@ SELECT COUNT(*) FROM read_pgn('test/pgn_files/invalid_types.pgn');
 1
 
 # Invalid-but-non-empty values become NULL and produce parse_error messages.
-query IIIII
+query IIIIIIIII
 SELECT
   WhiteElo IS NULL,
   BlackElo IS NULL,
   UTCDate IS NULL,
   UTCTime IS NULL,
-  parse_error
+  parse_error LIKE '%Conversion error: WhiteElo=%',
+  parse_error LIKE '%Conversion error: BlackElo=%',
+  parse_error LIKE '%Conversion error: UTCDate=%',
+  parse_error LIKE '%Conversion error: UTCTime=%',
+  parse_error LIKE '%chrono:%'
 FROM read_pgn('test/pgn_files/invalid_types.pgn')
 LIMIT 1;
 ----
-true	true	true	true	Conversion error: WhiteElo='abc'; Conversion error: BlackElo='-5'; Conversion error: UTCDate='2024.13.01'; Conversion error: UTCTime='25:00:00'
+true	true	true	true	true	true	true	true	true

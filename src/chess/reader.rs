@@ -532,6 +532,214 @@ mod tests {
     }
 
     #[test]
+    fn test_pgn_visitor_date_candidate_selection_prefers_more_complete_partial() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Partial Date Selection"]
+[Date "1951.??.??"]
+[EventDate "1951.09.??"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(1951, 9, 1));
+        assert!(game.parse_error.is_none());
+    }
+
+    #[test]
+    fn test_pgn_visitor_date_candidate_selection_tie_break_by_precedence() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Date Precedence"]
+[UTCDate "1999.12.31"]
+[Date "2000.01.01"]
+[EventDate "2001.01.01"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(1999, 12, 31));
+        assert!(game.parse_error.is_none());
+    }
+
+    #[test]
+    fn test_pgn_visitor_date_unknown_is_null() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Unknown Date"]
+[Date "????.??.??"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        assert!(game.utc_date.is_none());
+        assert!(game.parse_error.is_none());
+    }
+
+    #[test]
+    fn test_pgn_visitor_date_partial_defaults() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Partial Date Defaults"]
+[Date "2000.??.??"]
+[EventDate "2000.06.??"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        // EventDate is more complete (year+month) than Date (year only), so it wins.
+        assert_eq!(utc_date.days, days_from_civil(2000, 6, 1));
+        assert!(game.parse_error.is_none());
+    }
+
+    #[test]
+    fn test_pgn_visitor_date_invalid_records_chrono_error() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Invalid Date"]
+[Date "2000.13.40"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        assert!(game.utc_date.is_none());
+        let err = game.parse_error.unwrap();
+        assert!(err.contains("UTCDate"));
+        assert!(err.contains("2000.13.40"));
+        assert!(err.contains("chrono:"));
+    }
+
+    #[test]
+    fn test_pgn_visitor_time_variants_and_offsets() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        // Zulu
+        let pgn_content = r#"
+[Event "Time Variants"]
+[UTCTime "12:00:00Z"]
+[Result "*"]
+
+*
+"#;
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+        let game = visitor.current_game.take().unwrap();
+        let utc_time = game.utc_time.unwrap();
+        let micros = 12i64 * 3600 * 1_000_000;
+        let micros_part = (micros as u64) & ((1u64 << 40) - 1);
+        let offset_sentinel: i32 = (16 * 60 * 60) - 1;
+        let encoded_offset = offset_sentinel - 0;
+        let offset_part = (encoded_offset as i64 as u64) & ((1u64 << 24) - 1);
+        assert_eq!(utc_time.bits, (micros_part << 24) | offset_part);
+
+        // Explicit positive offset
+        let pgn_content = r#"
+[Event "Time Variants"]
+[UTCTime "12:00:00+01:30"]
+[Result "*"]
+
+*
+"#;
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+        let game = visitor.current_game.take().unwrap();
+        let utc_time = game.utc_time.unwrap();
+        let offset_seconds: i32 = 1 * 3600 + 30 * 60;
+        let encoded_offset = offset_sentinel - offset_seconds;
+        let offset_part = (encoded_offset as i64 as u64) & ((1u64 << 24) - 1);
+        assert_eq!(utc_time.bits, (micros_part << 24) | offset_part);
+
+        // Explicit negative offset
+        let pgn_content = r#"
+[Event "Time Variants"]
+[UTCTime "12:00:00-05:00"]
+[Result "*"]
+
+*
+"#;
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+        let game = visitor.current_game.take().unwrap();
+        let utc_time = game.utc_time.unwrap();
+        let offset_seconds: i32 = -(5 * 3600);
+        let encoded_offset = offset_sentinel - offset_seconds;
+        let offset_part = (encoded_offset as i64 as u64) & ((1u64 << 24) - 1);
+        assert_eq!(utc_time.bits, (micros_part << 24) | offset_part);
+    }
+
+    #[test]
+    fn test_pgn_visitor_time_invalid_records_chrono_error() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Invalid Time"]
+[UTCTime "25:00:00"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        assert!(game.utc_time.is_none());
+        let err = game.parse_error.unwrap();
+        assert!(err.contains("UTCTime"));
+        assert!(err.contains("25:00:00"));
+        assert!(err.contains("chrono:"));
+    }
+
+    #[test]
     fn test_pgn_visitor_movetext_with_annotations() {
         use crate::chess::visitor::GameVisitor;
         use pgn_reader::Reader;

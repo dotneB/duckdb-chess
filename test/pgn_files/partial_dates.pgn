@@ -1,0 +1,32 @@
+[Event "A Unknown"]
+[Date "????.??.??"]
+[Result "*"]
+
+*
+
+[Event "B Year Only"]
+[Date "2000.??.??"]
+[Result "*"]
+
+*
+
+[Event "C Year Month"]
+[Date "2000.06.??"]
+[Result "*"]
+
+*
+
+[Event "D Prefer EventDate"]
+[Date "1951.??.??"]
+[EventDate "1951.09.??"]
+[Result "*"]
+
+*
+
+[Event "E Prefer Complete Later"]
+[UTCDate "2000.??.??"]
+[Date "1999.12.31"]
+[EventDate "2001.01.01"]
+[Result "*"]
+
+*
