@@ -13,5 +13,5 @@ INSERT INTO games VALUES (1, '1. e4 { start } e5'), (2, '1. d4 { other } d5');
 query II
 SELECT id, chess_moves_normalize(movetext) FROM games ORDER BY id;
 ----
-1	e4 e5
-2	d4 d5
+1	1. e4 e5
+2	1. d4 d5

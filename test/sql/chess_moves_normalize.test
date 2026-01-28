@@ -8,31 +8,31 @@ require chess
 query I
 SELECT chess_moves_normalize('1. e4 { comment } e5');
 ----
-e4 e5
+1. e4 e5
 
 # Test multiple annotations removal (Spec: Movetext Annotation Removal - Remove multiple annotations)
 query I
 SELECT chess_moves_normalize('1. e4 { first } e5 { second } 2. Nf3 { third }');
 ----
-e4 e5 Nf3
+1. e4 e5 2. Nf3
 
 # Test movetext without annotations (Spec: Movetext Annotation Removal - Preserve movetext without annotations)
 query I
 SELECT chess_moves_normalize('1. e4 e5 2. Nf3 Nc6');
 ----
-e4 e5 Nf3 Nc6
+1. e4 e5 2. Nf3 Nc6
 
 # Test nested annotations (Spec: Nested Annotation Handling - Nested braces)
 query I
 SELECT chess_moves_normalize('1. e4 { outer { inner } text } e5');
 ----
-e4 e5
+1. e4 e5
 
 # Test whitespace normalization (Spec: Whitespace Normalization - Remove extra spaces)
 query I
 SELECT chess_moves_normalize('1. e4  { comment }  e5   { another }  2. Nf3');
 ----
-e4 e5 Nf3
+1. e4 e5 2. Nf3
 
 # Test empty string input (Spec: Single Row Output - Empty input handling)
 query I
@@ -44,31 +44,31 @@ SELECT chess_moves_normalize('');
 query I
 SELECT chess_moves_normalize('1. d4 { [%eval 0.25] } d5 { [%clk 1:30:00] } 2. c4 { best move } e6');
 ----
-d4 d5 c4 e6
+1. d4 d5 2. c4 e6
 
 # Test annotation at start
 query I
 SELECT chess_moves_normalize('{ opening comment } 1. e4 e5');
 ----
-e4 e5
+1. e4 e5
 
 # Test annotation at end
 query I
 SELECT chess_moves_normalize('1. e4 e5 { game ends }');
 ----
-e4 e5
+1. e4 e5
 
 # Test move structure preservation (Spec: Move Structure Preservation)
 query I
 SELECT chess_moves_normalize('1. e4 { pawn } e5 { pawn } 2. Nf3+ { check } Nc6');
 ----
-e4 e5 Nf3+ Nc6
+1. e4 e5 2. Nf3+ Nc6
 
 # Test that result markers are preserved
 query I
 SELECT chess_moves_normalize('1. e4 e5 2. Qh5 Nc6 3. Qxf7# { checkmate } 1-0');
 ----
-e4 e5 Qh5 Nc6 Qxf7# 1-0
+1. e4 e5 2. Qh5 Nc6 3. Qxf7# 1-0
 
 # Test with real Lichess-style annotation example
 query I
@@ -81,22 +81,22 @@ WHERE chess_moves_normalize('1. d4 { [%eval 0.25] [%clk 1:30:43] } Nf6 { [%eval 
 query I
 SELECT chess_moves_normalize('1. e4 (1. d4) e5');
 ----
-e4 e5
+1. e4 e5
 
 # NEW STRICTER BEHAVIOR: Test NAG symbols are removed
 query I
 SELECT chess_moves_normalize('1. e4! e5?');
 ----
-e4 e5
+1. e4 e5
 
 # NEW STRICTER BEHAVIOR: Test numeric NAGs are removed
 query I
 SELECT chess_moves_normalize('1. e4$1 e5$2');
 ----
-e4 e5
+1. e4 e5
 
 # NEW STRICTER BEHAVIOR: Test complex example with all features
 query I
 SELECT chess_moves_normalize('1. e4! {Best by test} (1. d4 d5) e5?? $1 2. Nf3');
 ----
-e4 e5 Nf3
+1. e4 e5 2. Nf3

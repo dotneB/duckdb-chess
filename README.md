@@ -168,7 +168,7 @@ Notes:
 
 ```sql
 SELECT chess_moves_normalize('1. e4! {comment} e5?? $1 2. Nf3') AS clean;
--- clean = 'e4 e5 Nf3'
+-- clean = '1. e4 e5 2. Nf3'
 
 SELECT chess_moves_hash('e4 e5 Nf3 Nc6') AS h;          -- BIGINT
 SELECT chess_ply_count('1. e4 e5 2. Nf3') AS ply_count;  -- BIGINT

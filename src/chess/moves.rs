@@ -12,7 +12,7 @@ use std::ffi::CString;
 use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 
-use crate::chess::filter::normalize_movetext;
+use crate::chess::filter::{is_move_number, normalize_movetext};
 
 pub struct ChessMovesJsonScalar;
 
@@ -105,6 +105,9 @@ fn process_moves_with_limit(
     let mut ply = 0;
 
     for token in clean_text.split_whitespace() {
+        if is_move_number(token) {
+            continue;
+        }
         if token == "1-0" || token == "0-1" || token == "1/2-1/2" || token == "*" {
             continue;
         }
@@ -265,6 +268,9 @@ fn ply_count(movetext: &str) -> i64 {
     let mut ply = 0;
 
     for token in clean_text.split_whitespace() {
+        if is_move_number(token) {
+            continue;
+        }
         if token == "1-0" || token == "0-1" || token == "1/2-1/2" || token == "*" {
             continue;
         }
@@ -322,9 +328,13 @@ impl VScalar for ChessMovesHashScalar {
             let val = unsafe { read_duckdb_string(*s) };
             let normalized = normalize_movetext(&val);
 
+            // Hash just the move sequence (ignore move numbers/result markers).
+            let moves_only = extract_moves(&normalized);
+            let canonical = moves_only.join(" ");
+
             // Compute hash
             let mut hasher = DefaultHasher::new();
-            normalized.hash(&mut hasher);
+            canonical.hash(&mut hasher);
             *out = hasher.finish() as i64;
         }
         Ok(())
@@ -557,8 +567,9 @@ mod tests {
     // Helper function to compute hash like the scalar function does
     fn compute_hash(movetext: &str) -> i64 {
         let normalized = normalize_movetext(movetext);
+        let canonical = extract_moves(&normalized).join(" ");
         let mut hasher = DefaultHasher::new();
-        normalized.hash(&mut hasher);
+        canonical.hash(&mut hasher);
         hasher.finish() as i64
     }
 

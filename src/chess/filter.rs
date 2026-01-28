@@ -8,7 +8,10 @@ use std::error::Error;
 use std::ffi::CString;
 
 /// Normalize chess movetext by removing comments {}, variations (), and NAGs ($n, !, ?, etc.)
-/// Returns a canonical string representation with standardized spacing
+/// Returns a canonical string representation with standardized spacing.
+///
+/// Note: Move numbers (e.g., `1.`, `12.`, `1...`) are preserved, but only when they precede
+/// a subsequent non-move-number token.
 /// Spec: move-analysis - Moves Normalization
 pub fn normalize_movetext(movetext: &str) -> String {
     // Preprocess: add space after move numbers like "1.e4" -> "1. e4"
@@ -21,6 +24,18 @@ pub fn normalize_movetext(movetext: &str) -> String {
     let mut variation_depth = 0;
     let mut prev_was_space = false;
     let mut buffer = String::new();
+    let mut pending_move_number: Option<String> = None;
+
+    fn push_token(out: &mut String, token: &str, prev_was_space: &mut bool) {
+        if token.is_empty() {
+            return;
+        }
+        if !out.is_empty() && !*prev_was_space {
+            out.push(' ');
+        }
+        out.push_str(token);
+        *prev_was_space = false;
+    }
 
     for ch in preprocessed.chars() {
         match ch {
@@ -50,11 +65,17 @@ pub fn normalize_movetext(movetext: &str) -> String {
                 if !buffer.is_empty() {
                     // Check if buffer contains NAG symbols to strip
                     let cleaned = strip_nags(&buffer);
-                    if !cleaned.is_empty() && !is_move_number(&cleaned) {
-                        if !result.is_empty() && !prev_was_space {
-                            result.push(' ');
+                    if !cleaned.is_empty() {
+                        if is_move_number(&cleaned) {
+                            // Only emit move numbers if they're followed by a move/result token.
+                            let _ = pending_move_number.take();
+                            pending_move_number = Some(cleaned);
+                        } else {
+                            if let Some(mn) = pending_move_number.take() {
+                                push_token(&mut result, &mn, &mut prev_was_space);
+                            }
+                            push_token(&mut result, &cleaned, &mut prev_was_space);
                         }
-                        result.push_str(&cleaned);
                     }
                     buffer.clear();
                 }
@@ -71,11 +92,15 @@ pub fn normalize_movetext(movetext: &str) -> String {
     // Process remaining buffer
     if !buffer.is_empty() {
         let cleaned = strip_nags(&buffer);
-        if !cleaned.is_empty() && !is_move_number(&cleaned) {
-            if !result.is_empty() && !prev_was_space {
-                result.push(' ');
+        if !cleaned.is_empty() {
+            if is_move_number(&cleaned) {
+                // Trailing move number with no following token; drop it.
+            } else {
+                if let Some(mn) = pending_move_number.take() {
+                    push_token(&mut result, &mn, &mut prev_was_space);
+                }
+                push_token(&mut result, &cleaned, &mut prev_was_space);
             }
-            result.push_str(&cleaned);
         }
     }
 
@@ -83,14 +108,28 @@ pub fn normalize_movetext(movetext: &str) -> String {
 }
 
 /// Check if a token is a move number (e.g., "1.", "12.", "1...")
-fn is_move_number(token: &str) -> bool {
-    // Check for patterns like "1.", "12.", "1..."
-    if token.ends_with('.') || token.contains("...") {
-        // Verify it starts with digits
-        token.chars().next().is_some_and(|c| c.is_ascii_digit())
-    } else {
-        false
+pub(crate) fn is_move_number(token: &str) -> bool {
+    let token = token.trim();
+    if token.is_empty() {
+        return false;
     }
+
+    let bytes = token.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == 0 {
+        return false;
+    }
+
+    let mut j = i;
+    while j < bytes.len() && bytes[j] == b'.' {
+        j += 1;
+    }
+
+    let dot_count = j - i;
+    (dot_count == 1 || dot_count == 3) && j == bytes.len()
 }
 
 /// Preprocess movetext to ensure space after move numbers
@@ -98,26 +137,38 @@ fn is_move_number(token: &str) -> bool {
 pub fn preprocess_move_numbers(movetext: &str) -> String {
     let mut result = String::new();
     let mut chars = movetext.chars().peekable();
-    let mut in_number = false;
 
-    while let Some(ch) = chars.next() {
-        result.push(ch);
-
-        // Track if we're in a move number (digits followed by .)
+    while let Some(&ch) = chars.peek() {
         if ch.is_ascii_digit() {
-            in_number = true;
-        } else if ch == '.' && in_number {
-            // This is a move number period
-            // Check if next char is not whitespace and not another period
-            if let Some(&next_ch) = chars.peek()
-                && !next_ch.is_whitespace()
-                && next_ch != '.'
+            // Capture the full move number (digits)
+            while let Some(&d) = chars.peek()
+                && d.is_ascii_digit()
             {
-                result.push(' ');
+                result.push(d);
+                chars.next();
             }
-            in_number = false;
-        } else if !ch.is_ascii_digit() {
-            in_number = false;
+
+            // Capture following dots ('.' or '...')
+            if let Some(&'.') = chars.peek() {
+                let mut dot_count = 0usize;
+                while let Some(&'.') = chars.peek() {
+                    result.push('.');
+                    chars.next();
+                    dot_count += 1;
+                }
+
+                // Add a space after a full move number token when immediately followed by a move.
+                // - "1.e4"   -> "1. e4"
+                // - "1...e5" -> "1... e5"
+                if (dot_count == 1 || dot_count == 3)
+                    && chars.peek().is_some_and(|c| !c.is_whitespace())
+                {
+                    result.push(' ');
+                }
+            }
+        } else {
+            result.push(ch);
+            chars.next();
         }
     }
 
@@ -205,19 +256,19 @@ mod tests {
     #[test]
     fn test_normalize_complex() {
         let input = "1. e4! {Best by test} (1. d4 d5) e5?? $1 2. Nf3";
-        assert_eq!(normalize_movetext(input), "e4 e5 Nf3");
+        assert_eq!(normalize_movetext(input), "1. e4 e5 2. Nf3");
     }
 
     #[test]
     fn test_normalize_nag_symbols() {
-        assert_eq!(normalize_movetext("1. e4!"), "e4");
-        assert_eq!(normalize_movetext("1. e4?"), "e4");
-        assert_eq!(normalize_movetext("1. e4!!"), "e4");
-        assert_eq!(normalize_movetext("1. e4??"), "e4");
-        assert_eq!(normalize_movetext("1. e4!?"), "e4");
-        assert_eq!(normalize_movetext("1. e4?!"), "e4");
-        assert_eq!(normalize_movetext("1. e4$1"), "e4");
-        assert_eq!(normalize_movetext("1. e4$10"), "e4");
+        assert_eq!(normalize_movetext("1. e4!"), "1. e4");
+        assert_eq!(normalize_movetext("1. e4?"), "1. e4");
+        assert_eq!(normalize_movetext("1. e4!!"), "1. e4");
+        assert_eq!(normalize_movetext("1. e4??"), "1. e4");
+        assert_eq!(normalize_movetext("1. e4!?"), "1. e4");
+        assert_eq!(normalize_movetext("1. e4?!"), "1. e4");
+        assert_eq!(normalize_movetext("1. e4$1"), "1. e4");
+        assert_eq!(normalize_movetext("1. e4$10"), "1. e4");
     }
 
     #[test]
@@ -252,25 +303,28 @@ mod tests {
     #[test]
     fn test_normalize_annotation_at_start() {
         let input = "{ opening comment } 1. e4 e5";
-        assert_eq!(normalize_movetext(input), "e4 e5");
+        assert_eq!(normalize_movetext(input), "1. e4 e5");
     }
 
     #[test]
     fn test_normalize_annotation_at_end() {
         let input = "1. e4 e5 { game ends }";
-        assert_eq!(normalize_movetext(input), "e4 e5");
+        assert_eq!(normalize_movetext(input), "1. e4 e5");
     }
 
     #[test]
     fn test_normalize_move_structure_preservation() {
         let input = "1. e4 { pawn } e5 { pawn } 2. Nf3+ { check } Nc6";
-        assert_eq!(normalize_movetext(input), "e4 e5 Nf3+ Nc6");
+        assert_eq!(normalize_movetext(input), "1. e4 e5 2. Nf3+ Nc6");
     }
 
     #[test]
     fn test_normalize_result_markers_preserved() {
         let input = "1. e4 e5 2. Qh5 Nc6 3. Qxf7# { checkmate } 1-0";
-        assert_eq!(normalize_movetext(input), "e4 e5 Qh5 Nc6 Qxf7# 1-0");
+        assert_eq!(
+            normalize_movetext(input),
+            "1. e4 e5 2. Qh5 Nc6 3. Qxf7# 1-0"
+        );
     }
 
     #[test]
@@ -278,37 +332,37 @@ mod tests {
         let input = "1. d4 { [%eval 0.25] [%clk 1:30:43] } Nf6 { [%eval 0.22] [%clk 1:30:42] }";
         let result = normalize_movetext(input);
         assert!(!result.contains('{'));
-        assert_eq!(result, "d4 Nf6");
+        assert_eq!(result, "1. d4 Nf6");
     }
 
     #[test]
     fn test_normalize_variations_removed() {
         let input = "1. e4 (1. d4) e5";
-        assert_eq!(normalize_movetext(input), "e4 e5");
+        assert_eq!(normalize_movetext(input), "1. e4 e5");
     }
 
     #[test]
     fn test_normalize_nag_symbols_removed() {
         let input = "1. e4! e5?";
-        assert_eq!(normalize_movetext(input), "e4 e5");
+        assert_eq!(normalize_movetext(input), "1. e4 e5");
     }
 
     #[test]
     fn test_normalize_numeric_nags_removed() {
         let input = "1. e4$1 e5$2";
-        assert_eq!(normalize_movetext(input), "e4 e5");
+        assert_eq!(normalize_movetext(input), "1. e4 e5");
     }
 
     #[test]
     fn test_normalize_complex_all_features() {
         let input = "1. e4! {Best by test} (1. d4 d5) e5?? $1 2. Nf3";
-        assert_eq!(normalize_movetext(input), "e4 e5 Nf3");
+        assert_eq!(normalize_movetext(input), "1. e4 e5 2. Nf3");
     }
 
     #[test]
     fn test_normalize_complex_annotation_with_multiple_levels() {
         let input = "1. d4 { [%eval 0.25] } d5 { [%clk 1:30:00] } 2. c4 { best move } e6";
-        assert_eq!(normalize_movetext(input), "d4 d5 c4 e6");
+        assert_eq!(normalize_movetext(input), "1. d4 d5 2. c4 e6");
     }
 
     #[test]
@@ -335,8 +389,8 @@ mod tests {
 
     #[test]
     fn test_preprocess_move_numbers_ellipses() {
-        assert_eq!(preprocess_move_numbers("1...e4"), "1...e4");
-        assert_eq!(preprocess_move_numbers("10...e5"), "10...e5");
+        assert_eq!(preprocess_move_numbers("1...e4"), "1... e4");
+        assert_eq!(preprocess_move_numbers("10...e5"), "10... e5");
     }
 
     #[test]
@@ -352,13 +406,13 @@ mod tests {
         let result = normalize_movetext(input);
         // The current implementation stops parsing when encountering malformed nested variations
         // This is actually reasonable behavior for robustness
-        assert_eq!(result, "e4");
+        assert_eq!(result, "1. e4");
     }
 
     #[test]
     fn test_normalize_mixed_annotations_and_variations() {
         let input = "1. e4 {comment} (1. d4 {alternative}) e5";
-        assert_eq!(normalize_movetext(input), "e4 e5");
+        assert_eq!(normalize_movetext(input), "1. e4 e5");
     }
 
     #[test]
@@ -384,23 +438,23 @@ mod tests {
 
     #[test]
     fn test_normalize_castling_with_symbols() {
-        assert_eq!(normalize_movetext("1. e4 O-O"), "e4 O-O");
-        assert_eq!(normalize_movetext("1. e4 O-O+"), "e4 O-O+");
-        assert_eq!(normalize_movetext("1. e4 O-O-O"), "e4 O-O-O");
-        assert_eq!(normalize_movetext("1. e4 O-O-O+"), "e4 O-O-O+");
+        assert_eq!(normalize_movetext("1. e4 O-O"), "1. e4 O-O");
+        assert_eq!(normalize_movetext("1. e4 O-O+"), "1. e4 O-O+");
+        assert_eq!(normalize_movetext("1. e4 O-O-O"), "1. e4 O-O-O");
+        assert_eq!(normalize_movetext("1. e4 O-O-O+"), "1. e4 O-O-O+");
     }
 
     #[test]
     fn test_normalize_complex_move_notation() {
         assert_eq!(
             normalize_movetext("1. e4 e5 2. Nf3+ Nc6 3. Bb5 a6 4. Ba4 Nf6"),
-            "e4 e5 Nf3+ Nc6 Bb5 a6 Ba4 Nf6"
+            "1. e4 e5 2. Nf3+ Nc6 3. Bb5 a6 4. Ba4 Nf6"
         );
     }
 
     #[test]
     fn test_normalize_with_all_nag_variants() {
         let input = "1. e4!! e5?? Nf3!? Nc6?! $1 $2";
-        assert_eq!(normalize_movetext(input), "e4 e5 Nf3 Nc6");
+        assert_eq!(normalize_movetext(input), "1. e4 e5 Nf3 Nc6");
     }
 }
