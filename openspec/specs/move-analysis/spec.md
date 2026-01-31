@@ -146,7 +146,7 @@ The system SHALL provide a scalar function `chess_moves_subset(short_movetext, l
 - **THEN** the function returns `FALSE`.
 
 ### Requirement: Ply Count
-The system SHALL provide a scalar function `chess_ply_count(movetext)` that returns the number of valid plies found in PGN movetext.
+The system SHALL provide a scalar function `chess_ply_count(movetext)` that returns the number of plies parsed from PGN movetext according to `pgn-reader`.
 
 #### Scenario: Count plies
 - **WHEN** user calls `chess_ply_count('1. e4 e5 2. Nf3')`
@@ -156,9 +156,23 @@ The system SHALL provide a scalar function `chess_ply_count(movetext)` that retu
 - **WHEN** user calls `chess_ply_count('1. e4 e5 1-0')`
 - **THEN** the function returns `2`
 
-#### Scenario: Invalid token stops counting
+The function SHALL count syntactically valid SAN tokens and SHALL NOT validate move legality.
+
+Unknown tokens in the input SHALL NOT stop counting if `pgn-reader` can continue parsing subsequent SAN tokens.
+
+If the input cannot be parsed as PGN movetext, the function SHALL return `0`.
+
+#### Scenario: Unknown token does not stop counting
 - **WHEN** user calls `chess_ply_count('1. e4 e5 INVALID 2. Nf3')`
+- **THEN** the function returns `3`
+
+#### Scenario: Unknown token between moves
+- **WHEN** user calls `chess_ply_count('1. e4 INVALID 2. Nf3')`
 - **THEN** the function returns `2`
+
+#### Scenario: Illegal but syntactically valid SAN still counts
+- **WHEN** user calls `chess_ply_count('1. e4 e5 2. Kxe8')`
+- **THEN** the function returns `3`
 
 #### Scenario: Empty or Null input
 - **WHEN** user calls `chess_ply_count('')` or `chess_ply_count(NULL)`
@@ -184,4 +198,3 @@ The EPD format SHALL be the first 4 fields of a valid FEN string: `board side ca
 #### Scenario: Invalid input
 - **WHEN** user calls `chess_fen_epd('not a fen')`
 - **THEN** the function returns `NULL`
-

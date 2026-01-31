@@ -100,3 +100,15 @@ query I
 SELECT chess_moves_normalize('1. e4! {Best by test} (1. d4 d5) e5?? $1 2. Nf3');
 ----
 1. e4 e5 2. Nf3
+
+# Parse failure returns empty string
+query I
+SELECT chess_moves_normalize('this is not movetext');
+----
+(empty)
+
+# NULL input propagates to NULL output
+query I
+SELECT chess_moves_normalize(NULL);
+----
+NULL

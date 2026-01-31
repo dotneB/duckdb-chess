@@ -17,12 +17,17 @@ SELECT chess_ply_count('1. e4! {c} e5?? 1-0');
 query I
 SELECT chess_ply_count('1. e4 e5 INVALID 2. Nf3');
 ----
+3
+
+query I
+SELECT chess_ply_count('1. e4 INVALID 2. Nf3');
+----
 2
 
 query I
 SELECT chess_ply_count('1. e4 e5 2. Kxe8');
 ----
-2
+3
 
 query I
 SELECT chess_ply_count(NULL);

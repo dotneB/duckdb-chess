@@ -6,201 +6,158 @@ use duckdb::{
 use libduckdb_sys::duckdb_string_t;
 use std::error::Error;
 use std::ffi::CString;
+use std::fmt::Write;
+use std::io;
+use std::ops::ControlFlow;
+
+use pgn_reader::{Nag, Outcome, RawComment, Reader, SanPlus, Skip, Visitor};
 
 /// Normalize chess movetext by removing comments {}, variations (), and NAGs ($n, !, ?, etc.)
 /// Returns a canonical string representation with standardized spacing.
-///
-/// Note: Move numbers (e.g., `1.`, `12.`, `1...`) are preserved, but only when they precede
-/// a subsequent non-move-number token.
 /// Spec: move-analysis - Moves Normalization
 pub fn normalize_movetext(movetext: &str) -> String {
-    // Preprocess: add space after move numbers like "1.e4" -> "1. e4"
-    let preprocessed = preprocess_move_numbers(movetext);
+    let parsed = parse_movetext_mainline(movetext);
 
-    let mut result = String::new();
-    let mut in_comment = false;
-    let mut in_variation = false;
-    let mut comment_depth = 0;
-    let mut variation_depth = 0;
-    let mut prev_was_space = false;
-    let mut buffer = String::new();
-    let mut pending_move_number: Option<String> = None;
+    // Parse failures return an empty string (see change delta spec).
+    if parsed.parse_error {
+        return String::new();
+    }
 
-    fn push_token(out: &mut String, token: &str, prev_was_space: &mut bool) {
-        if token.is_empty() {
-            return;
+    serialize_sans_to_movetext(&parsed.sans, parsed.outcome.as_deref())
+}
+
+pub(crate) struct ParsedMovetext {
+    pub sans: Vec<String>,
+    pub outcome: Option<String>,
+    pub parse_error: bool,
+}
+
+pub(crate) fn parse_movetext_mainline(movetext: &str) -> ParsedMovetext {
+    if movetext.trim().is_empty() {
+        return ParsedMovetext {
+            sans: Vec::new(),
+            outcome: None,
+            parse_error: false,
+        };
+    }
+
+    let mut reader = Reader::new(io::Cursor::new(movetext.as_bytes()));
+    let mut visitor = NormalizeVisitor::default();
+
+    match reader.read_game(&mut visitor) {
+        Ok(Some(())) => ParsedMovetext {
+            sans: visitor.sans,
+            outcome: visitor.outcome,
+            parse_error: false,
+        },
+        Ok(None) => ParsedMovetext {
+            sans: visitor.sans,
+            outcome: visitor.outcome,
+            parse_error: true,
+        },
+        Err(_) => ParsedMovetext {
+            sans: visitor.sans,
+            outcome: visitor.outcome,
+            parse_error: true,
+        },
+    }
+}
+
+fn serialize_sans_to_movetext(sans: &[String], outcome: Option<&str>) -> String {
+    let mut out = String::new();
+
+    for (idx, san) in sans.iter().enumerate() {
+        if idx.is_multiple_of(2) {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            let move_no = (idx / 2) + 1;
+            let _ = write!(out, "{}.", move_no);
+            out.push(' ');
+            out.push_str(san);
+        } else {
+            out.push(' ');
+            out.push_str(san);
         }
-        if !out.is_empty() && !*prev_was_space {
+    }
+
+    if let Some(outcome) = outcome {
+        if !out.is_empty() {
             out.push(' ');
         }
-        out.push_str(token);
-        *prev_was_space = false;
+        out.push_str(outcome);
     }
 
-    for ch in preprocessed.chars() {
-        match ch {
-            '{' => {
-                in_comment = true;
-                comment_depth += 1;
-            }
-            '}' => {
-                comment_depth -= 1;
-                if comment_depth == 0 {
-                    in_comment = false;
-                    prev_was_space = true;
-                }
-            }
-            '(' => {
-                in_variation = true;
-                variation_depth += 1;
-            }
-            ')' => {
-                variation_depth -= 1;
-                if variation_depth == 0 {
-                    in_variation = false;
-                    prev_was_space = true;
-                }
-            }
-            ' ' if !in_comment && !in_variation => {
-                if !buffer.is_empty() {
-                    // Check if buffer contains NAG symbols to strip
-                    let cleaned = strip_nags(&buffer);
-                    if !cleaned.is_empty() {
-                        if is_move_number(&cleaned) {
-                            // Only emit move numbers if they're followed by a move/result token.
-                            let _ = pending_move_number.take();
-                            pending_move_number = Some(cleaned);
-                        } else {
-                            if let Some(mn) = pending_move_number.take() {
-                                push_token(&mut result, &mn, &mut prev_was_space);
-                            }
-                            push_token(&mut result, &cleaned, &mut prev_was_space);
-                        }
-                    }
-                    buffer.clear();
-                }
-                prev_was_space = true;
-            }
-            _ if !in_comment && !in_variation => {
-                buffer.push(ch);
-                prev_was_space = false;
-            }
-            _ => {}
-        }
-    }
-
-    // Process remaining buffer
-    if !buffer.is_empty() {
-        let cleaned = strip_nags(&buffer);
-        if !cleaned.is_empty() {
-            if is_move_number(&cleaned) {
-                // Trailing move number with no following token; drop it.
-            } else {
-                if let Some(mn) = pending_move_number.take() {
-                    push_token(&mut result, &mn, &mut prev_was_space);
-                }
-                push_token(&mut result, &cleaned, &mut prev_was_space);
-            }
-        }
-    }
-
-    result.trim().to_string()
+    out
 }
 
-/// Check if a token is a move number (e.g., "1.", "12.", "1...")
-pub(crate) fn is_move_number(token: &str) -> bool {
-    let token = token.trim();
-    if token.is_empty() {
-        return false;
-    }
-
-    let bytes = token.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() && bytes[i].is_ascii_digit() {
-        i += 1;
-    }
-    if i == 0 {
-        return false;
-    }
-
-    let mut j = i;
-    while j < bytes.len() && bytes[j] == b'.' {
-        j += 1;
-    }
-
-    let dot_count = j - i;
-    (dot_count == 1 || dot_count == 3) && j == bytes.len()
+#[derive(Default)]
+struct NormalizeVisitor {
+    sans: Vec<String>,
+    outcome: Option<String>,
 }
 
-/// Preprocess movetext to ensure space after move numbers
-/// Converts "1.e4" to "1. e4"
-pub fn preprocess_move_numbers(movetext: &str) -> String {
-    let mut result = String::new();
-    let mut chars = movetext.chars().peekable();
+impl Visitor for NormalizeVisitor {
+    type Tags = ();
+    type Movetext = ();
+    type Output = ();
 
-    while let Some(&ch) = chars.peek() {
-        if ch.is_ascii_digit() {
-            // Capture the full move number (digits)
-            while let Some(&d) = chars.peek()
-                && d.is_ascii_digit()
-            {
-                result.push(d);
-                chars.next();
-            }
-
-            // Capture following dots ('.' or '...')
-            if let Some(&'.') = chars.peek() {
-                let mut dot_count = 0usize;
-                while let Some(&'.') = chars.peek() {
-                    result.push('.');
-                    chars.next();
-                    dot_count += 1;
-                }
-
-                // Add a space after a full move number token when immediately followed by a move.
-                // - "1.e4"   -> "1. e4"
-                // - "1...e5" -> "1... e5"
-                if (dot_count == 1 || dot_count == 3)
-                    && chars.peek().is_some_and(|c| !c.is_whitespace())
-                {
-                    result.push(' ');
-                }
-            }
-        } else {
-            result.push(ch);
-            chars.next();
-        }
+    fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
+        self.sans.clear();
+        self.outcome = None;
+        ControlFlow::Continue(())
     }
 
-    result
-}
-
-/// Strip NAG symbols from a token
-/// NAGs include: !, ?, !!, ??, !?, ?!, $1, $2, etc.
-fn strip_nags(token: &str) -> String {
-    let mut result = String::new();
-    let mut chars = token.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '$' => {
-                // Skip $ and following digits
-                while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
-                    chars.next();
-                }
-            }
-            '!' | '?' => {
-                // Skip NAG symbols (!, ??, !!, ?!, !?)
-                // Continue skipping consecutive ! and ?
-                while chars.peek().is_some_and(|c| *c == '!' || *c == '?') {
-                    chars.next();
-                }
-            }
-            _ => result.push(ch),
-        }
+    fn begin_movetext(&mut self, _tags: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        ControlFlow::Continue(())
     }
 
-    result
+    fn san(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        san_plus: SanPlus,
+    ) -> ControlFlow<Self::Output> {
+        self.sans.push(san_plus.to_string());
+        ControlFlow::Continue(())
+    }
+
+    fn nag(&mut self, _movetext: &mut Self::Movetext, _nag: Nag) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn partial_comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn begin_variation(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+    ) -> ControlFlow<Self::Output, Skip> {
+        ControlFlow::Continue(Skip(true))
+    }
+
+    fn outcome(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        outcome: Outcome,
+    ) -> ControlFlow<Self::Output> {
+        self.outcome = Some(outcome.to_string());
+        ControlFlow::Continue(())
+    }
+
+    fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {}
 }
 
 pub struct ChessMovesNormalizeScalar;
@@ -215,11 +172,16 @@ impl VScalar for ChessMovesNormalizeScalar {
     ) -> Result<(), Box<dyn Error>> {
         let len = input.len();
         let input_vec = input.flat_vector(0);
-        let output_vec = output.flat_vector();
+        let mut output_vec = output.flat_vector();
 
         let input_slice = input_vec.as_slice::<duckdb_string_t>();
 
         for (i, s) in input_slice.iter().take(len).enumerate() {
+            if input_vec.row_is_null(i as u64) {
+                output_vec.set_null(i);
+                continue;
+            }
+
             let val = unsafe { read_duckdb_string(*s) };
             let normalized = normalize_movetext(&val);
             output_vec.insert(i, CString::new(normalized)?);
@@ -274,16 +236,6 @@ mod tests {
     #[test]
     fn test_normalize_empty() {
         assert_eq!(normalize_movetext(""), "");
-    }
-
-    #[test]
-    fn test_strip_nags() {
-        assert_eq!(strip_nags("e4!"), "e4");
-        assert_eq!(strip_nags("e4?"), "e4");
-        assert_eq!(strip_nags("e4!!"), "e4");
-        assert_eq!(strip_nags("e4$1"), "e4");
-        assert_eq!(strip_nags("Nf3+"), "Nf3+");
-        assert_eq!(strip_nags("O-O"), "O-O");
     }
 
     #[test]
@@ -373,40 +325,20 @@ mod tests {
         assert!(!normalize_movetext(input).contains('{'));
     }
 
-    // Tests for preprocessing move numbers
-
-    #[test]
-    fn test_preprocess_move_numbers_basic() {
-        assert_eq!(preprocess_move_numbers("1.e4"), "1. e4");
-        assert_eq!(preprocess_move_numbers("10.e5"), "10. e5");
-    }
-
-    #[test]
-    fn test_preprocess_move_numbers_with_existing_space() {
-        assert_eq!(preprocess_move_numbers("1. e4"), "1. e4");
-        assert_eq!(preprocess_move_numbers("1.  e4"), "1.  e4");
-    }
-
-    #[test]
-    fn test_preprocess_move_numbers_ellipses() {
-        assert_eq!(preprocess_move_numbers("1...e4"), "1... e4");
-        assert_eq!(preprocess_move_numbers("10...e5"), "10... e5");
-    }
-
-    #[test]
-    fn test_preprocess_move_numbers_mixed() {
-        assert_eq!(preprocess_move_numbers("1.e4 e5 2.Nf3"), "1. e4 e5 2. Nf3");
-    }
-
     // Additional edge case tests
 
     #[test]
     fn test_normalize_deeply_nested_variations() {
         let input = "1. e4 ((1. d4 (1. c4)) e5";
         let result = normalize_movetext(input);
-        // The current implementation stops parsing when encountering malformed nested variations
-        // This is actually reasonable behavior for robustness
+        // We only keep mainline; malformed/unbalanced variations may cause the
+        // remainder of the string to be skipped by the PGN parser.
         assert_eq!(result, "1. e4");
+    }
+
+    #[test]
+    fn test_normalize_parse_failure_returns_empty_string() {
+        assert_eq!(normalize_movetext("this is not movetext"), "");
     }
 
     #[test]
@@ -455,6 +387,6 @@ mod tests {
     #[test]
     fn test_normalize_with_all_nag_variants() {
         let input = "1. e4!! e5?? Nf3!? Nc6?! $1 $2";
-        assert_eq!(normalize_movetext(input), "1. e4 e5 Nf3 Nc6");
+        assert_eq!(normalize_movetext(input), "1. e4 e5 2. Nf3 Nc6");
     }
 }

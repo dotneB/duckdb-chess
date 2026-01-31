@@ -12,7 +12,7 @@ use std::ffi::CString;
 use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 
-use crate::chess::filter::{is_move_number, normalize_movetext};
+use crate::chess::filter::parse_movetext_mainline;
 
 pub struct ChessMovesJsonScalar;
 
@@ -95,7 +95,7 @@ fn process_moves_with_limit(
         return Ok("[]".to_string());
     }
 
-    let clean_text = normalize_movetext(movetext);
+    let parsed = parse_movetext_mainline(movetext);
     let mut pos = Chess::default();
     let mut json = String::new();
 
@@ -104,14 +104,7 @@ fn process_moves_with_limit(
     let mut first = true;
     let mut ply = 0;
 
-    for token in clean_text.split_whitespace() {
-        if is_move_number(token) {
-            continue;
-        }
-        if token == "1-0" || token == "0-1" || token == "1/2-1/2" || token == "*" {
-            continue;
-        }
-
+    for token in parsed.sans {
         let san: SanPlus = match token.parse() {
             Ok(s) => s,
             Err(_) => break,
@@ -259,37 +252,12 @@ fn ply_count(movetext: &str) -> i64 {
         return 0;
     }
 
-    let clean_text = normalize_movetext(movetext);
-    if clean_text.is_empty() {
+    let parsed = parse_movetext_mainline(movetext);
+    if parsed.parse_error {
         return 0;
     }
 
-    let mut pos = Chess::default();
-    let mut ply = 0;
-
-    for token in clean_text.split_whitespace() {
-        if is_move_number(token) {
-            continue;
-        }
-        if token == "1-0" || token == "0-1" || token == "1/2-1/2" || token == "*" {
-            continue;
-        }
-
-        let san: SanPlus = match token.parse() {
-            Ok(s) => s,
-            Err(_) => break,
-        };
-
-        let m = match san.san.to_move(&pos) {
-            Ok(m) => m,
-            Err(_) => break,
-        };
-
-        pos.play_unchecked(m);
-        ply += 1;
-    }
-
-    ply
+    parsed.sans.len() as i64
 }
 
 unsafe fn read_duckdb_string(s: duckdb_string_t) -> String {
@@ -326,11 +294,7 @@ impl VScalar for ChessMovesHashScalar {
 
         for (out, s) in output_slice.iter_mut().take(len).zip(input_slice.iter()) {
             let val = unsafe { read_duckdb_string(*s) };
-            let normalized = normalize_movetext(&val);
-
-            // Hash just the move sequence (ignore move numbers/result markers).
-            let moves_only = extract_moves(&normalized);
-            let canonical = moves_only.join(" ");
+            let canonical = parse_movetext_mainline(&val).sans.join(" ");
 
             // Compute hash
             let mut hasher = DefaultHasher::new();
@@ -394,12 +358,8 @@ impl VScalar for ChessMovesSubsetScalar {
 }
 
 fn check_moves_subset(short_movetext: &str, long_movetext: &str) -> bool {
-    let short_normalized = normalize_movetext(short_movetext);
-    let long_normalized = normalize_movetext(long_movetext);
-
-    // Extract just the moves (without move numbers)
-    let short_moves = extract_moves(&short_normalized);
-    let long_moves = extract_moves(&long_normalized);
+    let short_moves = parse_movetext_mainline(short_movetext).sans;
+    let long_moves = parse_movetext_mainline(long_movetext).sans;
 
     // Check if short is a prefix of long
     if short_moves.len() > long_moves.len() {
@@ -412,23 +372,9 @@ fn check_moves_subset(short_movetext: &str, long_movetext: &str) -> bool {
         .all(|(s, l)| s == l)
 }
 
-fn extract_moves(movetext: &str) -> Vec<String> {
-    movetext
-        .split_whitespace()
-        .filter(|token| {
-            // Skip move numbers (e.g., "1.", "2.", "1...")
-            !token.ends_with('.') && !token.contains("...")
-                // Skip result markers
-                && *token != "1-0" && *token != "0-1" && *token != "1/2-1/2" && *token != "*"
-        })
-        .map(|s| s.to_string())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chess::filter::normalize_movetext;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -504,8 +450,9 @@ mod tests {
     #[test]
     fn test_ply_count_ignores_junk_and_stops() {
         assert_eq!(ply_count("1. e4! {c} e5?? 1-0"), 2);
-        assert_eq!(ply_count("1. e4 e5 INVALID 2. Nf3"), 2);
-        assert_eq!(ply_count("1. e4 e5 2. Kxe8"), 2);
+        assert_eq!(ply_count("1. e4 e5 INVALID 2. Nf3"), 3);
+        assert_eq!(ply_count("1. e4 INVALID 2. Nf3"), 2);
+        assert_eq!(ply_count("1. e4 e5 2. Kxe8"), 3);
     }
 
     #[test]
@@ -566,8 +513,7 @@ mod tests {
 
     // Helper function to compute hash like the scalar function does
     fn compute_hash(movetext: &str) -> i64 {
-        let normalized = normalize_movetext(movetext);
-        let canonical = extract_moves(&normalized).join(" ");
+        let canonical = parse_movetext_mainline(movetext).sans.join(" ");
         let mut hasher = DefaultHasher::new();
         canonical.hash(&mut hasher);
         hasher.finish() as i64
