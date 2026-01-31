@@ -1,0 +1,34 @@
+schema: spec-driven
+
+context: |
+  Project: DuckDB loadable extension (Rust 2024) for chess PGN analysis.
+  Goal: Parse PGN(s) and expose Lichess-like game data via DuckDB table functions.
+  Key behavior:
+  - Table function reads file paths or globs; streams PGN parsing; outputs rows in chunks (2048).
+  - Malformed games: log warning and continue (do not fail entire batch).
+  Tech stack:
+  - Rust: 2024 edition (Rust MSRV: 1.89.0, Toolchain: 1.93.0)
+  - DuckDB target: 1.4.4
+  - Core crates: duckdb, duckdb-ext-macros, libduckdb-sys, pgn-reader, shakmaty, glob
+  - DuckDB extension build: cargo-duckdb-ext-tools for extension macros, cargo-duckdb-ext-tools for packaging
+  Conventions:
+  - SQL scalar function names MUST be prefixed `chess_`
+    - Single-move helpers: `chess_move_*`
+    - Movetext/sequence helpers: `chess_moves_*`
+  - Prefer Result-based error handling; avoid panics.
+  Tests:
+  - TDD, Red-Green: write failing test first, then implement to pass.
+  - Dev flow: `make dev`. It runs checks (fmt, clippy), builds in debug, runs tests (both unit and SQLLogicTest).
+  - Release flow: `make test-release-rs`. It builds optimized release and runs tests (both unit and SQLLogicTest).
+  - SQLLogicTest: `test/sql/*.test` (must start with `require chess`).
+  - Sample PGNs: `test/pgn_files/`
+  Constraints:
+  - Must build on Linux (amd64/arm64), Windows, macOS
+  - Local testing may require `duckdb -unsigned`
+  - Release builds use LTO + strip
+  Chess domain notes:
+  - PGN = header tags + movetext (SAN with move numbers); comments in `{...}`; variations possible.
+  - We align output with Lichess game export schema; key tags include:
+    Event, Site, White, Black, Result, WhiteElo, BlackElo, ECO, Opening, Termination, TimeControl, UTCDate, UTCTime
+  - Result is one of: 1-0, 0-1, 1/2-1/2, *
+  - Movetext utilities (chess_moves_*) may normalize by removing comments/variations/NAGs to produce a canonical main line.

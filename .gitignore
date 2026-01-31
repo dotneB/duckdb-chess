@@ -13,7 +13,7 @@ venv
 .idea
 
 # Agent Commands
-.opencode/command
+.opencode/
 
 # Test artifacts
 duckdb_unittest_tempdir
