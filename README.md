@@ -27,7 +27,7 @@ SELECT COUNT_IF(chess_moves_subset('1. e4 e5', movetext))  FROM read_pgn('test/p
 -- Removes comments/variations/NAGs and normalizes move numbers
 SELECT chess_moves_normalize(movetext) FROM read_pgn('test/pgn_files/sample.pgn');
 
--- Hash of the normalized movetext
+-- Zobrist hash of the final mainline position
 SELECT chess_moves_hash('1. e4 e5 2. Nf3 Nc6') AS hash;
 
 -- Ply count
@@ -170,7 +170,7 @@ Notes:
 SELECT chess_moves_normalize('1. e4! {comment} e5?? $1 2. Nf3') AS clean;
 -- clean = '1. e4 e5 2. Nf3'
 
-SELECT chess_moves_hash('e4 e5 Nf3 Nc6') AS h;          -- BIGINT
+SELECT chess_moves_hash('e4 e5 Nf3 Nc6') AS h;          -- UBIGINT
 SELECT chess_ply_count('1. e4 e5 2. Nf3') AS ply_count;  -- BIGINT
 ```
 
@@ -274,7 +274,7 @@ Returned columns:
 | Function | Returns | Notes |
 |---|---|---|
 | `chess_moves_normalize(movetext)` | VARCHAR | Removes comments/variations/NAGs and normalizes move numbers |
-| `chess_moves_hash(movetext)` | BIGINT | Hash of the normalized movetext |
+| `chess_moves_hash(movetext)` | UBIGINT | Zobrist hash of the final mainline position (comments/variations/NAGs ignored); NULL for empty/unparseable input |
 | `chess_ply_count(movetext)` | BIGINT | Ply count (NULL-safe macro) |
 | `chess_moves_json(movetext, max_ply := NULL)` | VARCHAR | JSON string of `{ply, move, fen, epd}` (NULL-safe macro) |
 | `chess_fen_epd(fen)` | VARCHAR | Converts FEN to EPD join key (board/side/castling/ep) |

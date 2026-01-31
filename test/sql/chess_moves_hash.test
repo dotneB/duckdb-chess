@@ -40,17 +40,29 @@ SELECT (chess_moves_hash('1. e4') != chess_moves_hash('1. e4 e5'))::BOOLEAN;
 ----
 true
 
-# Test hash with empty string
+# Test transposition collision - different move order, same final position
 query I
-SELECT chess_moves_hash('');
+SELECT (chess_moves_hash('1. Nf3 d5 2. g3') = chess_moves_hash('1. g3 d5 2. Nf3'))::BOOLEAN;
 ----
-3476900567878811119
+true
 
-# Test hash returns BIGINT
+# Test empty input returns NULL
+query I
+SELECT chess_moves_hash('') IS NULL;
+----
+true
+
+# Test NULL input propagates NULL
+query I
+SELECT chess_moves_hash(NULL) IS NULL;
+----
+true
+
+# Test hash returns UBIGINT
 query I
 SELECT typeof(chess_moves_hash('1. e4 e5'));
 ----
-BIGINT
+UBIGINT
 
 # Test deduplication use case - find duplicates
 statement ok
@@ -61,11 +73,13 @@ CREATE TABLE games AS SELECT * FROM (VALUES
     ('1. d4 d5', 'Game 4')
 ) AS t(movetext, name);
 
-query II
-SELECT chess_moves_hash(movetext), COUNT(*) as count
-FROM games
-GROUP BY 1
-HAVING COUNT(*) > 1
-ORDER BY count DESC;
+query I
+SELECT MAX(count)
+FROM (
+  SELECT COUNT(*) as count
+  FROM games
+  GROUP BY chess_moves_hash(movetext)
+  HAVING COUNT(*) > 1
+) t;
 ----
--3658142033769421290	3
+3

@@ -5,12 +5,12 @@ use duckdb::{
     vtab::arrow::WritableVector,
 };
 use libduckdb_sys::duckdb_string_t;
-use shakmaty::{Chess, EnPassantMode, Position, fen::Fen, san::SanPlus};
-use std::collections::hash_map::DefaultHasher;
+use pgn_reader::{Nag, RawComment, Reader, SanPlus as PgnSanPlus, Skip, Visitor};
+use shakmaty::{Chess, EnPassantMode, Position, fen::Fen, san::SanPlus, zobrist::Zobrist64};
 use std::error::Error;
 use std::ffi::CString;
 use std::fmt::Write;
-use std::hash::{Hash, Hasher};
+use std::io;
 
 use crate::chess::filter::parse_movetext_mainline;
 
@@ -277,6 +277,107 @@ unsafe fn read_duckdb_string(s: duckdb_string_t) -> String {
 // Spec: move-analysis - Moves Hashing
 pub struct ChessMovesHashScalar;
 
+fn zobrist_hash_of_position(pos: &Chess) -> u64 {
+    let Zobrist64(v) = pos.zobrist_hash::<Zobrist64>(EnPassantMode::Legal);
+    v
+}
+
+#[derive(Default)]
+struct ZobristHashVisitor {
+    pos: Chess,
+    hash: u64,
+}
+
+impl ZobristHashVisitor {
+    fn init(&mut self) {
+        self.pos = Chess::default();
+        self.hash = zobrist_hash_of_position(&self.pos);
+    }
+}
+
+impl Visitor for ZobristHashVisitor {
+    type Tags = ();
+    type Movetext = ();
+    type Output = ();
+
+    fn begin_tags(&mut self) -> std::ops::ControlFlow<Self::Output, Self::Tags> {
+        self.init();
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn begin_movetext(
+        &mut self,
+        _tags: Self::Tags,
+    ) -> std::ops::ControlFlow<Self::Output, Self::Movetext> {
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn san(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        san_plus: PgnSanPlus,
+    ) -> std::ops::ControlFlow<Self::Output> {
+        let m = match san_plus.san.to_move(&self.pos) {
+            Ok(m) => m,
+            Err(_) => return std::ops::ControlFlow::Break(()),
+        };
+
+        self.pos.play_unchecked(m);
+        self.hash = zobrist_hash_of_position(&self.pos);
+
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn nag(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _nag: Nag,
+    ) -> std::ops::ControlFlow<Self::Output> {
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> std::ops::ControlFlow<Self::Output> {
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn partial_comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> std::ops::ControlFlow<Self::Output> {
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn begin_variation(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+    ) -> std::ops::ControlFlow<Self::Output, Skip> {
+        std::ops::ControlFlow::Continue(Skip(true))
+    }
+
+    fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {}
+}
+
+fn movetext_final_zobrist_hash(movetext: &str) -> Option<u64> {
+    if movetext.trim().is_empty() {
+        return None;
+    }
+
+    let mut reader = Reader::new(io::Cursor::new(movetext.as_bytes()));
+    let mut visitor = ZobristHashVisitor::default();
+    visitor.init();
+
+    match reader.read_game(&mut visitor) {
+        Ok(Some(())) => Some(visitor.hash),
+        Ok(None) => None,
+        Err(_) => None,
+    }
+}
+
 impl VScalar for ChessMovesHashScalar {
     type State = ();
 
@@ -290,16 +391,18 @@ impl VScalar for ChessMovesHashScalar {
         let mut output_vec = output.flat_vector();
 
         let input_slice = input_vec.as_slice::<duckdb_string_t>();
-        let output_slice = output_vec.as_mut_slice::<i64>();
 
-        for (out, s) in output_slice.iter_mut().take(len).zip(input_slice.iter()) {
+        for (i, s) in input_slice.iter().take(len).enumerate() {
+            if input_vec.row_is_null(i as u64) {
+                output_vec.set_null(i);
+                continue;
+            }
+
             let val = unsafe { read_duckdb_string(*s) };
-            let canonical = parse_movetext_mainline(&val).sans.join(" ");
-
-            // Compute hash
-            let mut hasher = DefaultHasher::new();
-            canonical.hash(&mut hasher);
-            *out = hasher.finish() as i64;
+            match movetext_final_zobrist_hash(&val) {
+                Some(v) => output_vec.as_mut_slice::<u64>()[i] = v,
+                None => output_vec.set_null(i),
+            }
         }
         Ok(())
     }
@@ -307,7 +410,7 @@ impl VScalar for ChessMovesHashScalar {
     fn signatures() -> Vec<ScalarFunctionSignature> {
         vec![ScalarFunctionSignature::exact(
             vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
-            LogicalTypeHandle::from(LogicalTypeId::Bigint),
+            LogicalTypeHandle::from(LogicalTypeId::UBigint),
         )]
     }
 }
@@ -375,8 +478,6 @@ fn check_moves_subset(short_movetext: &str, long_movetext: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
 
     #[test]
     fn test_process_moves_basic() {
@@ -458,65 +559,62 @@ mod tests {
     #[test]
     fn test_chess_moves_hash_consistency_formatting() {
         // Test identical moves with different formatting produce same hash
-        let hash1 = compute_hash("1. e4 e5");
-        let hash2 = compute_hash("1.e4 e5");
+        let hash1 = movetext_final_zobrist_hash("1. e4 e5").unwrap();
+        let hash2 = movetext_final_zobrist_hash("1.e4 e5").unwrap();
         assert_eq!(hash1, hash2);
     }
 
     #[test]
     fn test_chess_moves_hash_consistency_comments() {
         // Test identical moves with comments produce same hash
-        let hash1 = compute_hash("1. e4 e5");
-        let hash2 = compute_hash("1. e4 {comment} e5");
+        let hash1 = movetext_final_zobrist_hash("1. e4 e5").unwrap();
+        let hash2 = movetext_final_zobrist_hash("1. e4 {comment} e5").unwrap();
         assert_eq!(hash1, hash2);
     }
 
     #[test]
     fn test_chess_moves_hash_consistency_variations() {
         // Test identical moves with variations produce same hash
-        let hash1 = compute_hash("1. e4 e5");
-        let hash2 = compute_hash("1. e4 (1. d4) e5");
+        let hash1 = movetext_final_zobrist_hash("1. e4 e5").unwrap();
+        let hash2 = movetext_final_zobrist_hash("1. e4 (1. d4) e5").unwrap();
         assert_eq!(hash1, hash2);
     }
 
     #[test]
     fn test_chess_moves_hash_consistency_nags() {
         // Test identical moves with NAGs produce same hash
-        let hash1 = compute_hash("1. e4 e5");
-        let hash2 = compute_hash("1. e4! e5?");
+        let hash1 = movetext_final_zobrist_hash("1. e4 e5").unwrap();
+        let hash2 = movetext_final_zobrist_hash("1. e4! e5?").unwrap();
         assert_eq!(hash1, hash2);
     }
 
     #[test]
     fn test_chess_moves_hash_discrimination_different_moves() {
         // Test different moves produce different hashes
-        let hash1 = compute_hash("1. e4 e5");
-        let hash2 = compute_hash("1. d4 d5");
+        let hash1 = movetext_final_zobrist_hash("1. e4 e5").unwrap();
+        let hash2 = movetext_final_zobrist_hash("1. d4 d5").unwrap();
         assert_ne!(hash1, hash2);
     }
 
     #[test]
     fn test_chess_moves_hash_discrimination_different_length() {
         // Test different length sequences produce different hashes
-        let hash1 = compute_hash("1. e4");
-        let hash2 = compute_hash("1. e4 e5");
+        let hash1 = movetext_final_zobrist_hash("1. e4").unwrap();
+        let hash2 = movetext_final_zobrist_hash("1. e4 e5").unwrap();
         assert_ne!(hash1, hash2);
     }
 
     #[test]
     fn test_chess_moves_hash_empty_string() {
-        // Test hash of empty string
-        let hash = compute_hash("");
-        // Known hash value for empty string
-        assert_eq!(hash, 3476900567878811119);
+        // Empty input returns NULL.
+        assert!(movetext_final_zobrist_hash("").is_none());
     }
 
-    // Helper function to compute hash like the scalar function does
-    fn compute_hash(movetext: &str) -> i64 {
-        let canonical = parse_movetext_mainline(movetext).sans.join(" ");
-        let mut hasher = DefaultHasher::new();
-        canonical.hash(&mut hasher);
-        hasher.finish() as i64
+    #[test]
+    fn test_chess_moves_hash_transposition_collision() {
+        let hash1 = movetext_final_zobrist_hash("1. Nf3 d5 2. g3").unwrap();
+        let hash2 = movetext_final_zobrist_hash("1. g3 d5 2. Nf3").unwrap();
+        assert_eq!(hash1, hash2);
     }
 
     #[test]
