@@ -1,8 +1,31 @@
+## [0.2.0] - 2026-02-03
+
+### 🚀 Features
+
+- Use chrono lib instead of custom date/time parsing
+- Chess_moves_normalize uses pgn-reader Visitor instead of custom logic
+- Chess_moves_hash uses shakmaty zobrist hashing
+
+### 🐛 Bug Fixes
+
+- Chess_moves_normalized shouldn't remove move numbers
+
+### ⚡ Performance
+
+- Faster debug builds
+
+### ⚙️ Miscellaneous Tasks
+
+- Improve CHANGELOG.md generation
+- Bump pgn-reader to 0.29, shakmaty to 0.30
+- Update openspec
+
 ## [0.1.2] - 2026-01-27
 
 ### 🚀 Features
 
 - Bump duckdb to 1.4.4
+
 ## [0.1.1] - 2026-01-26
 
 ### 🚀 Features
@@ -32,6 +55,7 @@
 ### ⚙️ Miscellaneous Tasks
 
 - Generate notes for the release
+
 ## [0.1.0] - 2026-01-24
 
 ### 🚀 Features
@@ -71,3 +95,4 @@
 - Release process
 - Fix gh token usage
 - Fix extension names in release
+

@@ -114,13 +114,10 @@ jobs:
         uses: taiki-e/install-action@git-cliff
 
       - name: Generate changelog
-        id: git-cliff
-        run: echo "changelog=$(git-cliff --latest --strip header)\n" >> $GITHUB_OUTPUT
+        run: git-cliff --latest --strip header > "$RUNNER_TEMP/release-notes.md"
 
       - name: Publish Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_CHANGES: ${{ steps.git-cliff.outputs.changelog }}
         run: |
-          echo "$RELEASE_CHANGES" > $RUNNER_TEMP/notes.txt
-          gh release create "${{ github.ref_name }}" --target "${{ github.sha }}" --title "${{ github.ref_name }}" --notes-file "$RUNNER_TEMP/notes.txt" release_assets/*
+          gh release create "${{ github.ref_name }}" --target "${{ github.sha }}" --title "${{ github.ref_name }}" --notes-file "$RUNNER_TEMP/release-notes.md" release_assets/*
