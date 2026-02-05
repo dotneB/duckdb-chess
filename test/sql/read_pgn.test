@@ -4,7 +4,7 @@
 
 require chess
 
-# Test schema matches extended Lichess (16 columns + 1 diagnostic column)
+# Test schema matches extended Lichess (16 columns + 2 diagnostic columns)
 query IIIIII
 DESCRIBE SELECT * FROM read_pgn('test/pgn_files/sample.pgn') LIMIT 1;
 ----
@@ -25,6 +25,7 @@ Termination	VARCHAR	YES	NULL	NULL	NULL
 TimeControl	VARCHAR	YES	NULL	NULL	NULL
 movetext	VARCHAR	YES	NULL	NULL	NULL
 parse_error	VARCHAR	YES	NULL	NULL	NULL
+Source	VARCHAR	YES	NULL	NULL	NULL
 
 # Test counting games
 query I

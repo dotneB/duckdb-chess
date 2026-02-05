@@ -6,6 +6,7 @@ pub struct GameRecord {
     // Core game info
     pub event: Option<String>,
     pub site: Option<String>,
+    pub source: Option<String>,
     pub white: Option<String>,
     pub black: Option<String>,
     pub result: Option<String>,

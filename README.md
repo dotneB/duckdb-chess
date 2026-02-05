@@ -249,36 +249,37 @@ Reads chess games from one or more PGN files.
 
 Returned columns:
 
-| Column | Type | Notes |
-|---|---|---|
-| Event | VARCHAR | PGN tag |
-| Site | VARCHAR | PGN tag |
-| White | VARCHAR | PGN tag |
-| Black | VARCHAR | PGN tag |
-| Result | VARCHAR | PGN tag |
-| WhiteTitle | VARCHAR | PGN tag (nullable) |
-| BlackTitle | VARCHAR | PGN tag (nullable) |
-| WhiteElo | UINTEGER | PGN tag (nullable) |
-| BlackElo | UINTEGER | PGN tag (nullable) |
-| UTCDate | DATE | PGN tag (nullable) |
-| UTCTime | TIMETZ | PGN tag (nullable, treated as UTC) |
-| ECO | VARCHAR | PGN tag |
-| Opening | VARCHAR | PGN tag |
-| Termination | VARCHAR | PGN tag |
-| TimeControl | VARCHAR | PGN tag |
-| movetext | VARCHAR | Raw mainline, includes `{...}` comments |
-| parse_error | VARCHAR | NULL on success; error message on failure |
+| Column      | Type     | Notes                                     |
+| ----------- | -------- | ----------------------------------------- |
+| Event       | VARCHAR  | PGN tag                                   |
+| Site        | VARCHAR  | PGN tag                                   |
+| White       | VARCHAR  | PGN tag                                   |
+| Black       | VARCHAR  | PGN tag                                   |
+| Result      | VARCHAR  | PGN tag                                   |
+| WhiteTitle  | VARCHAR  | PGN tag (nullable)                        |
+| BlackTitle  | VARCHAR  | PGN tag (nullable)                        |
+| WhiteElo    | UINTEGER | PGN tag (nullable)                        |
+| BlackElo    | UINTEGER | PGN tag (nullable)                        |
+| UTCDate     | DATE     | PGN tag (nullable)                        |
+| UTCTime     | TIMETZ   | PGN tag (nullable, treated as UTC)        |
+| ECO         | VARCHAR  | PGN tag                                   |
+| Opening     | VARCHAR  | PGN tag                                   |
+| Termination | VARCHAR  | PGN tag                                   |
+| TimeControl | VARCHAR  | PGN tag                                   |
+| movetext    | VARCHAR  | Raw mainline, includes `{...}` comments   |
+| parse_error | VARCHAR  | NULL on success; error message on failure |
+| Source      | VARCHAR  | PGN tag (nullable)                        |
 
 ### Scalar Functions
 
-| Function | Returns | Notes |
-|---|---|---|
-| `chess_moves_normalize(movetext)` | VARCHAR | Removes comments/variations/NAGs and normalizes move numbers |
-| `chess_moves_hash(movetext)` | UBIGINT | Zobrist hash of the final mainline position (comments/variations/NAGs ignored); NULL for empty/unparseable input |
-| `chess_ply_count(movetext)` | BIGINT | Ply count (NULL-safe macro) |
-| `chess_moves_json(movetext, max_ply := NULL)` | VARCHAR | JSON string of `{ply, move, fen, epd}` (NULL-safe macro) |
-| `chess_fen_epd(fen)` | VARCHAR | Converts FEN to EPD join key (board/side/castling/ep) |
-| `chess_moves_subset(short_movetext, long_movetext)` | BOOLEAN | True if normalized `short` is a prefix of normalized `long` |
+| Function                                            | Returns | Notes                                                                                                            |
+| --------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| `chess_moves_normalize(movetext)`                   | VARCHAR | Removes comments/variations/NAGs and normalizes move numbers                                                     |
+| `chess_moves_hash(movetext)`                        | UBIGINT | Zobrist hash of the final mainline position (comments/variations/NAGs ignored); NULL for empty/unparseable input |
+| `chess_ply_count(movetext)`                         | BIGINT  | Ply count (NULL-safe macro)                                                                                      |
+| `chess_moves_json(movetext, max_ply := NULL)`       | VARCHAR | JSON string of `{ply, move, fen, epd}` (NULL-safe macro)                                                         |
+| `chess_fen_epd(fen)`                                | VARCHAR | Converts FEN to EPD join key (board/side/castling/ep)                                                            |
+| `chess_moves_subset(short_movetext, long_movetext)` | BOOLEAN | True if normalized `short` is a prefix of normalized `long`                                                      |
 
 
 ## License

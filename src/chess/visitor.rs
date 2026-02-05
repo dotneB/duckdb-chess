@@ -365,6 +365,7 @@ impl GameVisitor {
         self.current_game = Some(GameRecord {
             event: self.get_header("Event"),
             site: self.get_header("Site"),
+            source: self.get_header("Source"),
             white: self.get_header("White"),
             black: self.get_header("Black"),
             result: self
@@ -418,6 +419,7 @@ impl GameVisitor {
         self.current_game = Some(GameRecord {
             event: self.get_header("Event"),
             site: self.get_header("Site"),
+            source: self.get_header("Source"),
             white: self.get_header("White"),
             black: self.get_header("Black"),
             result: self

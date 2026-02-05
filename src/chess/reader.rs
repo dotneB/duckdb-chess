@@ -41,7 +41,7 @@ impl VTab for ReadPgnVTab {
         };
 
         // Spec: data-schema - Lichess Schema Compatibility
-        // Extended Lichess dataset schema (16 base columns + 1 diagnostic column = 17 total)
+        // Extended Lichess dataset schema (16 base columns + 2 extra columns = 18 total)
         bind.add_result_column("Event", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("Site", LogicalTypeHandle::from(LogicalTypeId::Varchar));
         bind.add_result_column("White", LogicalTypeHandle::from(LogicalTypeId::Varchar));
@@ -77,6 +77,8 @@ impl VTab for ReadPgnVTab {
             "parse_error",
             LogicalTypeHandle::from(LogicalTypeId::Varchar),
         );
+
+        bind.add_result_column("Source", LogicalTypeHandle::from(LogicalTypeId::Varchar));
 
         Ok(ReadPgnBindData { paths })
     }
@@ -114,6 +116,7 @@ impl VTab for ReadPgnVTab {
         let mut time_control_vec = output.flat_vector(14);
         let movetext_vec = output.flat_vector(15);
         let mut parse_error_vec = output.flat_vector(16);
+        let mut source_vec = output.flat_vector(17);
 
         let mut count = 0;
         let mut current_reader_state: Option<PgnReaderState> = None;
@@ -280,6 +283,12 @@ impl VTab for ReadPgnVTab {
                         parse_error_vec.insert(i, CString::new(val.as_str())?);
                     } else {
                         parse_error_vec.set_null(i);
+                    }
+
+                    if let Some(ref val) = game.source {
+                        source_vec.insert(i, CString::new(val.as_str())?);
+                    } else {
+                        source_vec.set_null(i);
                     }
 
                     count += 1;
