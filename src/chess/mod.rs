@@ -1,3 +1,4 @@
+mod duckdb_string;
 mod filter;
 mod moves;
 mod reader;

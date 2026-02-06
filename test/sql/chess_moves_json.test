@@ -36,6 +36,12 @@ SELECT chess_moves_json('');
 ----
 []
 
+# Test NULL input is treated like empty input
+query I
+SELECT chess_moves_json(NULL);
+----
+[]
+
 # Test result marker ignored
 query I
 SELECT chess_moves_json('1. e4 e5 1-0') = chess_moves_json('1. e4 e5');

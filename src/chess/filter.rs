@@ -1,3 +1,4 @@
+use super::duckdb_string::decode_duckdb_string;
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     vscalar::{ScalarFunctionSignature, VScalar},
@@ -182,7 +183,7 @@ impl VScalar for ChessMovesNormalizeScalar {
                 continue;
             }
 
-            let val = unsafe { read_duckdb_string(*s) };
+            let val = unsafe { decode_duckdb_string(*s) };
             let normalized = normalize_movetext(&val);
             output_vec.insert(i, CString::new(normalized)?);
         }
@@ -194,20 +195,6 @@ impl VScalar for ChessMovesNormalizeScalar {
             vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
             LogicalTypeHandle::from(LogicalTypeId::Varchar),
         )]
-    }
-}
-
-unsafe fn read_duckdb_string(s: duckdb_string_t) -> String {
-    if unsafe { s.value.inlined.length } <= 12 {
-        let len = unsafe { s.value.inlined.length } as usize;
-        let slice = unsafe { &s.value.inlined.inlined };
-        let slice_u8 = unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, len) };
-        String::from_utf8_lossy(slice_u8).into_owned()
-    } else {
-        let len = unsafe { s.value.pointer.length } as usize;
-        let ptr = unsafe { s.value.pointer.ptr };
-        let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
-        String::from_utf8_lossy(slice).into_owned()
     }
 }
 

@@ -12,6 +12,7 @@ use std::ffi::CString;
 use std::fmt::Write;
 use std::io;
 
+use crate::chess::duckdb_string::decode_duckdb_string;
 use crate::chess::filter::parse_movetext_mainline;
 
 pub struct ChessMovesJsonScalar;
@@ -42,7 +43,7 @@ impl VScalar for ChessMovesJsonScalar {
                 continue;
             }
 
-            let val = unsafe { read_duckdb_string(*s) };
+            let val = unsafe { decode_duckdb_string(*s) };
 
             let max_ply = match &max_ply_vec {
                 None => None,
@@ -190,7 +191,7 @@ impl VScalar for ChessFenEpdScalar {
                 continue;
             }
 
-            let val = unsafe { read_duckdb_string(*s) };
+            let val = unsafe { decode_duckdb_string(*s) };
             match fen_to_epd(&val) {
                 Some(epd) => output_vec.insert(i, CString::new(epd)?),
                 None => output_vec.set_null(i),
@@ -232,7 +233,7 @@ impl VScalar for ChessPlyCountScalar {
                 continue;
             }
 
-            let val = unsafe { read_duckdb_string(*s) };
+            let val = unsafe { decode_duckdb_string(*s) };
             output_slice[i] = ply_count(&val);
         }
 
@@ -258,20 +259,6 @@ fn ply_count(movetext: &str) -> i64 {
     }
 
     parsed.sans.len() as i64
-}
-
-unsafe fn read_duckdb_string(s: duckdb_string_t) -> String {
-    if unsafe { s.value.inlined.length } <= 12 {
-        let len = unsafe { s.value.inlined.length } as usize;
-        let slice = unsafe { &s.value.inlined.inlined };
-        let slice_u8 = unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, len) };
-        String::from_utf8_lossy(slice_u8).into_owned()
-    } else {
-        let len = unsafe { s.value.pointer.length } as usize;
-        let ptr = unsafe { s.value.pointer.ptr };
-        let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
-        String::from_utf8_lossy(slice).into_owned()
-    }
 }
 
 // Spec: move-analysis - Moves Hashing
@@ -398,7 +385,7 @@ impl VScalar for ChessMovesHashScalar {
                 continue;
             }
 
-            let val = unsafe { read_duckdb_string(*s) };
+            let val = unsafe { decode_duckdb_string(*s) };
             match movetext_final_zobrist_hash(&val) {
                 Some(v) => output_vec.as_mut_slice::<u64>()[i] = v,
                 None => output_vec.set_null(i),
@@ -433,18 +420,17 @@ impl VScalar for ChessMovesSubsetScalar {
 
         let input_slice_0 = input_vec_0.as_slice::<duckdb_string_t>();
         let input_slice_1 = input_vec_1.as_slice::<duckdb_string_t>();
-        let output_slice = output_vec.as_mut_slice::<bool>();
 
-        for ((out, s0), s1) in output_slice
-            .iter_mut()
-            .take(len)
-            .zip(input_slice_0.iter())
-            .zip(input_slice_1.iter())
-        {
-            let short_text = unsafe { read_duckdb_string(*s0) };
-            let long_text = unsafe { read_duckdb_string(*s1) };
+        for i in 0..len {
+            if input_vec_0.row_is_null(i as u64) || input_vec_1.row_is_null(i as u64) {
+                output_vec.set_null(i);
+                continue;
+            }
 
-            *out = check_moves_subset(&short_text, &long_text);
+            let short_text = unsafe { decode_duckdb_string(input_slice_0[i]) };
+            let long_text = unsafe { decode_duckdb_string(input_slice_1[i]) };
+
+            output_vec.as_mut_slice::<bool>()[i] = check_moves_subset(&short_text, &long_text);
         }
         Ok(())
     }
