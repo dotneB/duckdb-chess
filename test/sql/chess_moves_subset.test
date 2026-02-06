@@ -22,6 +22,33 @@ SELECT chess_moves_subset('1. e4 e5', '1. e4 e5');
 ----
 true
 
+# Test clean canonical fast-path candidates
+query I
+SELECT chess_moves_subset('1. e4 e5', '1. e4 e5 2. Nf3 Nc6');
+----
+true
+
+query I
+SELECT chess_moves_subset('1. e4 e5 2. Nf3 Nc6', '1. e4 e5');
+----
+false
+
+# Test result-marker-insensitive subset semantics
+query I
+SELECT chess_moves_subset('1. e4 e5 1-0', '1. e4 e5');
+----
+true
+
+query I
+SELECT chess_moves_subset('1. e4 e5', '1. e4 e5 0-1');
+----
+true
+
+query I
+SELECT chess_moves_subset('1. e4 e5 1/2-1/2', '1. e4 e5 *');
+----
+true
+
 # Test short is longer than long
 query I
 SELECT chess_moves_subset('1. e4 e5 2. Nf3', '1. e4');
@@ -46,6 +73,12 @@ SELECT chess_moves_subset('1. e4! e5?', '1. e4 e5 2. Nf3');
 ----
 true
 
+# Test dirty input fallback (compact move-number notation)
+query I
+SELECT chess_moves_subset('1.e4 e5', '1. e4 e5 2. Nf3');
+----
+true
+
 # Test empty string cases
 query I
 SELECT chess_moves_subset('', '1. e4');
@@ -59,6 +92,38 @@ false
 
 query I
 SELECT chess_moves_subset('', '');
+----
+true
+
+# Test invalid non-empty movetext cases
+query I
+SELECT chess_moves_subset('not movetext', '1. e4');
+----
+false
+
+query I
+SELECT chess_moves_subset('1. e4', 'not movetext');
+----
+false
+
+query I
+SELECT chess_moves_subset('1. e4 e4', '1. e4 e4');
+----
+true
+
+query I
+SELECT chess_moves_subset('not movetext', 'still not movetext');
+----
+false
+
+# Test NULL propagation
+query I
+SELECT chess_moves_subset(NULL, '1. e4') IS NULL;
+----
+true
+
+query I
+SELECT chess_moves_subset('1. e4', NULL) IS NULL;
 ----
 true
 

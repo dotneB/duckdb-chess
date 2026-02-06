@@ -461,10 +461,149 @@ impl VScalar for ChessMovesSubsetScalar {
 }
 
 fn check_moves_subset(short_movetext: &str, long_movetext: &str) -> bool {
-    let short_moves = parse_movetext_mainline(short_movetext).sans;
-    let long_moves = parse_movetext_mainline(long_movetext).sans;
+    if let Some(fast_result) = check_moves_subset_fast(short_movetext, long_movetext) {
+        return fast_result;
+    }
 
-    // Check if short is a prefix of long
+    check_moves_subset_with_parser(short_movetext, long_movetext)
+}
+
+fn check_moves_subset_fast(short_movetext: &str, long_movetext: &str) -> Option<bool> {
+    if !is_clean_mainline_movetext(short_movetext) || !is_clean_mainline_movetext(long_movetext) {
+        return None;
+    }
+
+    let short_moves = extract_clean_mainline_sans(short_movetext)?;
+    let long_moves = extract_clean_mainline_sans(long_movetext)?;
+
+    Some(is_prefix_subset(&short_moves, &long_moves))
+}
+
+fn is_clean_mainline_movetext(movetext: &str) -> bool {
+    let trimmed = movetext.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    if trimmed.chars().any(is_uncertain_syntax_char) {
+        return false;
+    }
+
+    let mut saw_result = false;
+    let mut saw_san = false;
+
+    for token in trimmed.split_whitespace() {
+        if saw_result {
+            return false;
+        }
+
+        if is_move_number_token(token) {
+            continue;
+        }
+
+        if is_result_marker(token) {
+            saw_result = true;
+            continue;
+        }
+
+        if !looks_like_san_token(token) {
+            return false;
+        }
+
+        saw_san = true;
+    }
+
+    saw_san
+}
+
+fn is_uncertain_syntax_char(c: char) -> bool {
+    matches!(c, '{' | '}' | '(' | ')' | '$' | '!' | '?' | ';')
+}
+
+fn is_move_number_token(token: &str) -> bool {
+    let Some(first_dot_index) = token.find('.') else {
+        return false;
+    };
+
+    if first_dot_index == 0 {
+        return false;
+    }
+
+    let (digits, dots) = token.split_at(first_dot_index);
+    if !digits.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+
+    dots == "." || dots == "..."
+}
+
+fn is_result_marker(token: &str) -> bool {
+    matches!(token, "1-0" | "0-1" | "1/2-1/2" | "*")
+}
+
+fn looks_like_san_token(token: &str) -> bool {
+    if token.is_empty() || !token.is_ascii() || token.contains('.') {
+        return false;
+    }
+
+    if matches!(
+        token,
+        "O-O" | "O-O+" | "O-O#" | "O-O-O" | "O-O-O+" | "O-O-O#"
+    ) {
+        return true;
+    }
+
+    let Some(first_byte) = token.as_bytes().first() else {
+        return false;
+    };
+
+    if !matches!(*first_byte, b'K' | b'Q' | b'R' | b'B' | b'N' | b'a'..=b'h') {
+        return false;
+    }
+
+    token
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, 'x' | '+' | '#' | '=' | '-'))
+}
+
+fn extract_clean_mainline_sans(movetext: &str) -> Option<Vec<String>> {
+    if movetext.trim().is_empty() {
+        return Some(Vec::new());
+    }
+
+    let mut saw_result = false;
+    let mut position = Chess::default();
+    let mut sans = Vec::new();
+
+    for token in movetext.split_whitespace() {
+        if saw_result {
+            return None;
+        }
+
+        if is_move_number_token(token) {
+            continue;
+        }
+
+        if is_result_marker(token) {
+            saw_result = true;
+            continue;
+        }
+
+        if !looks_like_san_token(token) {
+            return None;
+        }
+
+        let san_plus: SanPlus = token.parse().ok()?;
+        let m = san_plus.san.to_move(&position).ok()?;
+        position.play_unchecked(m);
+
+        sans.push(san_plus.to_string());
+    }
+
+    Some(sans)
+}
+
+fn is_prefix_subset(short_moves: &[String], long_moves: &[String]) -> bool {
     if short_moves.len() > long_moves.len() {
         return false;
     }
@@ -472,7 +611,28 @@ fn check_moves_subset(short_movetext: &str, long_movetext: &str) -> bool {
     short_moves
         .iter()
         .zip(long_moves.iter())
-        .all(|(s, l)| s == l)
+        .all(|(short, long)| short == long)
+}
+
+fn check_moves_subset_with_parser(short_movetext: &str, long_movetext: &str) -> bool {
+    let short_parsed = parse_movetext_mainline(short_movetext);
+    let long_parsed = parse_movetext_mainline(long_movetext);
+    let short_non_empty = !short_movetext.trim().is_empty();
+    let long_non_empty = !long_movetext.trim().is_empty();
+
+    let short_parse_failed = short_parsed.parse_error
+        || (short_non_empty && short_parsed.sans.is_empty() && short_parsed.outcome.is_none());
+    let long_parse_failed = long_parsed.parse_error
+        || (long_non_empty && long_parsed.sans.is_empty() && long_parsed.outcome.is_none());
+
+    if short_parse_failed {
+        return false;
+    }
+    if long_parse_failed {
+        return false;
+    }
+
+    is_prefix_subset(&short_parsed.sans, &long_parsed.sans)
 }
 
 #[cfg(test)]
@@ -665,5 +825,92 @@ mod tests {
         assert!(check_moves_subset("", "1. e4"));
         assert!(!check_moves_subset("1. e4", ""));
         assert!(check_moves_subset("", ""));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_invalid_non_empty_short() {
+        assert!(!check_moves_subset("not movetext", "1. e4"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_invalid_non_empty_long() {
+        assert!(!check_moves_subset("1. e4", "not movetext"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_both_invalid_non_empty() {
+        assert!(!check_moves_subset("not movetext", "still not movetext"));
+    }
+
+    #[test]
+    fn test_chess_moves_subset_fast_path_clean_equivalence() {
+        let cases = [
+            ("1. e4", "1. e4 e5", true),
+            ("1. e4 e5", "1. e4 e5", true),
+            ("1. d4", "1. e4 e5", false),
+            ("1. e4 e5 2. Nf3", "1. e4", false),
+        ];
+
+        for (short, long, expected) in cases {
+            assert_eq!(check_moves_subset_fast(short, long), Some(expected));
+            assert_eq!(check_moves_subset_with_parser(short, long), expected);
+            assert_eq!(check_moves_subset(short, long), expected);
+        }
+    }
+
+    #[test]
+    fn test_chess_moves_subset_fast_path_ignores_trailing_results() {
+        let cases = [
+            ("1. e4 e5 1-0", "1. e4 e5", true),
+            ("1. e4 e5", "1. e4 e5 0-1", true),
+            ("1. e4 e5 1/2-1/2", "1. e4 e5 *", true),
+            ("1. e4 e5 2. Nf3 *", "1. e4 e5", false),
+        ];
+
+        for (short, long, expected) in cases {
+            assert_eq!(check_moves_subset_fast(short, long), Some(expected));
+            assert_eq!(check_moves_subset_with_parser(short, long), expected);
+            assert_eq!(check_moves_subset(short, long), expected);
+        }
+    }
+
+    #[test]
+    fn test_chess_moves_subset_falls_back_for_uncertain_input() {
+        let cases = [
+            ("1. e4 {comment} e5", "1. e4 e5 2. Nf3"),
+            ("1. e4 (1. d4) e5", "1. e4 e5 2. Nf3"),
+            ("1. e4! e5?", "1. e4 e5 2. Nf3"),
+        ];
+
+        for (short, long) in cases {
+            assert_eq!(check_moves_subset_fast(short, long), None);
+            assert_eq!(
+                check_moves_subset(short, long),
+                check_moves_subset_with_parser(short, long)
+            );
+        }
+    }
+
+    #[test]
+    fn test_chess_moves_subset_falls_back_for_invalid_clean_tokens() {
+        assert_eq!(check_moves_subset_fast("1. e4 e4", "1. e4 e4"), None);
+        assert_eq!(
+            check_moves_subset("1. e4 e4", "1. e4 e4"),
+            check_moves_subset_with_parser("1. e4 e4", "1. e4 e4")
+        );
+    }
+
+    #[test]
+    fn test_is_clean_mainline_movetext_detector() {
+        assert!(is_clean_mainline_movetext("1. e4 e5 2. Nf3 Nc6"));
+        assert!(is_clean_mainline_movetext("e4 e5"));
+        assert!(is_clean_mainline_movetext("   "));
+
+        assert!(!is_clean_mainline_movetext("1."));
+        assert!(!is_clean_mainline_movetext("1.e4 e5"));
+        assert!(!is_clean_mainline_movetext("1. e4 {comment} e5"));
+        assert!(!is_clean_mainline_movetext("1. e4 (1. d4) e5"));
+        assert!(!is_clean_mainline_movetext("1. e4! e5?"));
+        assert!(!is_clean_mainline_movetext("not movetext"));
     }
 }
