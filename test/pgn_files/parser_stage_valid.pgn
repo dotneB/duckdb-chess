@@ -1,0 +1,7 @@
+[Event "Parser Stage Valid Game"]
+[Site "https://example.org/parser-stage-valid"]
+[White "ParserValidWhite"]
+[Black "ParserValidBlack"]
+[Result "1-0"]
+
+1. d4 d5 1-0

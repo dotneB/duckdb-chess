@@ -165,8 +165,10 @@ impl VTab for ReadPgnVTab {
                 // Note: We do NOT wrap File in BufReader because pgn-reader's documentation states:
                 // "Buffers the underlying reader with an appropriate strategy, so it's not
                 // recommended to add an additional layer of buffering like BufReader."
+                let game_index = reader.next_game_index;
                 let game_found = match reader.pgn_reader.read_game(&mut reader.visitor) {
                     Ok(Some(_)) => {
+                        reader.next_game_index += 1;
                         // Successfully parsed a game
                         if let Some(game) = reader.visitor.current_game.take() {
                             reader.record_buffer = game;
@@ -180,12 +182,15 @@ impl VTab for ReadPgnVTab {
                         false
                     }
                     Err(e) => {
+                        reader.next_game_index += 1;
                         // Parsing error - create partial game with error message
                         let error_msg = format!(
-                            "Error parsing game in file '{}': {}",
+                            "Parser-stage error: stage=read_game; file='{}'; game_index={}; error={}",
                             bind_data.paths[reader.path_idx].display(),
+                            game_index,
                             e
                         );
+                        eprintln!("WARNING: {}", error_msg);
                         reader.visitor.finalize_game_with_error(error_msg);
                         if let Some(game) = reader.visitor.current_game.take() {
                             reader.record_buffer = game;
@@ -662,6 +667,89 @@ mod tests {
     }
 
     #[test]
+    fn test_pgn_visitor_date_fallback_from_invalid_utcdate_to_date() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Invalid UTCDate Fallback Date"]
+[UTCDate "2024.13.01"]
+[Date "2024.01.02"]
+[EventDate "2024.01.03"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(2024, 1, 2));
+
+        let err = game.parse_error.unwrap();
+        assert!(err.contains("UTCDate='2024.13.01'"));
+        assert!(err.contains("chrono:"));
+    }
+
+    #[test]
+    fn test_pgn_visitor_date_fallback_from_invalid_utcdate_to_eventdate() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Invalid UTCDate Fallback EventDate"]
+[UTCDate "2024.13.01"]
+[Date "????.??.??"]
+[EventDate "2024.03.04"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(2024, 3, 4));
+
+        let err = game.parse_error.unwrap();
+        assert!(err.contains("UTCDate='2024.13.01'"));
+        assert!(err.contains("chrono:"));
+    }
+
+    #[test]
+    fn test_pgn_visitor_date_fallback_preserves_partial_completeness_policy() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Invalid UTCDate Partial Fallback"]
+[UTCDate "2024.13.01"]
+[Date "2000.??.??"]
+[EventDate "2000.06.??"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(2000, 6, 1));
+
+        let err = game.parse_error.unwrap();
+        assert!(err.contains("UTCDate='2024.13.01'"));
+    }
+
+    #[test]
     fn test_pgn_visitor_time_variants_and_offsets() {
         use crate::chess::visitor::GameVisitor;
         use pgn_reader::Reader;
@@ -724,6 +812,39 @@ mod tests {
     }
 
     #[test]
+    fn test_pgn_visitor_time_fallback_from_invalid_utctime_to_time() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Invalid UTCTime Fallback Time"]
+[UTCTime "25:00:00"]
+[Time "12:34:56"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_time = game.utc_time.unwrap();
+
+        let micros = (12i64 * 3600 + 34 * 60 + 56) * 1_000_000;
+        let micros_part = (micros as u64) & ((1u64 << 40) - 1);
+        let offset_sentinel: i32 = (16 * 60 * 60) - 1;
+        let encoded_offset = offset_sentinel;
+        let offset_part = (encoded_offset as i64 as u64) & ((1u64 << 24) - 1);
+        assert_eq!(utc_time.bits, (micros_part << 24) | offset_part);
+
+        let err = game.parse_error.unwrap();
+        assert!(err.contains("UTCTime='25:00:00'"));
+        assert!(err.contains("chrono:"));
+    }
+
+    #[test]
     fn test_pgn_visitor_time_invalid_records_chrono_error() {
         use crate::chess::visitor::GameVisitor;
         use pgn_reader::Reader;
@@ -746,6 +867,48 @@ mod tests {
         assert!(err.contains("UTCTime"));
         assert!(err.contains("25:00:00"));
         assert!(err.contains("chrono:"));
+    }
+
+    #[test]
+    fn test_pgn_visitor_parser_stage_and_conversion_errors_combined() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Parser Stage Error Game"]
+[White "ParserErrorWhite"]
+[Black "ParserErrorBlack"]
+[WhiteElo "abc"]
+[UTCDate "2024.13.01"]
+[UTCTime "25:00:00"]
+[Result "*"]
+
+1. e4 { unterminated comment
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+
+        let parser_error = reader.read_game(&mut visitor).unwrap_err();
+        visitor.finalize_game_with_error(format!(
+            "Parser-stage error: stage=read_game; file='inline-test.pgn'; game_index=1; error={}",
+            parser_error
+        ));
+
+        let game = visitor.current_game.take().unwrap();
+        assert_eq!(game.event.as_deref(), Some("Parser Stage Error Game"));
+        assert!(game.white_elo.is_none());
+        assert!(game.utc_date.is_none());
+        assert!(game.utc_time.is_none());
+
+        let parse_error = game.parse_error.unwrap();
+        assert!(parse_error.contains("Parser-stage error: stage=read_game"));
+        assert!(parse_error.contains("file='inline-test.pgn'"));
+        assert!(parse_error.contains("game_index=1"));
+        assert!(parse_error.contains("unterminated comment"));
+        assert!(parse_error.contains("Conversion error: WhiteElo='abc'"));
+        assert!(parse_error.contains("Conversion error: UTCDate='2024.13.01'"));
+        assert!(parse_error.contains("Conversion error: UTCTime='25:00:00'"));
     }
 
     #[test]

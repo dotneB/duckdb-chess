@@ -72,23 +72,23 @@ The system SHALL provide typed columns for game timestamp with fallback support,
 - **THEN** the `UTCDate` column contains a `DATE` representing 2024-01-01
 
 #### Scenario: Date fallback
- - **WHEN** a game lacks `UTCDate` but has a `Date` header with value "2024.01.01" or "2024-01-01"
- - **THEN** the `UTCDate` column contains a `DATE` representing 2024-01-01
+- **WHEN** a game lacks `UTCDate` but has a `Date` header with value "2024.01.01" or "2024-01-01"
+- **THEN** the `UTCDate` column contains a `DATE` representing 2024-01-01
 
 #### Scenario: EventDate fallback
 - **WHEN** a game lacks `UTCDate` and lacks `Date` but has an `EventDate` header with value "2024.01.01" or "2024-01-01"
 - **THEN** the `UTCDate` column contains a `DATE` representing 2024-01-01
 
 #### Scenario: Prefer first complete date in fallback chain
- - **WHEN** a game has multiple date headers among `UTCDate`, `Date`, and `EventDate`
- - **AND** at least one header provides a complete date (does not contain `?`)
- - **THEN** the `UTCDate` column uses a complete date value
- - **AND** if multiple complete date values exist, it uses the one from the earliest header in the chain `UTCDate` -> `Date` -> `EventDate`
+- **WHEN** a game has multiple date headers among `UTCDate`, `Date`, and `EventDate`
+- **AND** at least one header provides a complete date (does not contain `?`) that can be parsed
+- **THEN** the `UTCDate` column uses a complete date value
+- **AND** if multiple parseable complete date values exist, it uses the one from the earliest header in the chain `UTCDate` -> `Date` -> `EventDate`
 
 #### Scenario: Prefer most complete partial date
 - **WHEN** a game has multiple date headers among `UTCDate`, `Date`, and `EventDate`
-- **AND** no header provides a complete date
-- **AND** one header provides `YYYY-MM-??` while another provides `YYYY-??-??`
+- **AND** no parseable header provides a complete date
+- **AND** one parseable header provides `YYYY-MM-??` while another provides `YYYY-??-??`
 - **THEN** the `UTCDate` column uses the `YYYY-MM-??` value and defaults the day to `01`
 
 #### Scenario: Unknown date
@@ -115,10 +115,23 @@ The system SHALL provide typed columns for game timestamp with fallback support,
 - **WHEN** a game has `UTCTime`/`Time` with value "12:00:00+01:30" or "12:00:00-05:00"
 - **THEN** the `UTCTime` column contains a `TIMETZ` representing the provided local time with the provided offset
 
-#### Scenario: Invalid date/time values
-- **WHEN** a game has `UTCDate`/`Date` or `UTCTime`/`Time` headers with non-empty values that cannot be parsed into `DATE`/`TIMETZ`
-- **THEN** the corresponding columns contain SQL `NULL`
-- **AND** the `parse_error` column contains a conversion error message for the field(s)
+#### Scenario: Invalid primary date falls back to valid secondary date
+- **WHEN** a game has an invalid non-empty `UTCDate` value
+- **AND** a parseable fallback date exists in `Date` or `EventDate`
+- **THEN** the `UTCDate` column contains the parseable fallback `DATE` value
+- **AND** the `parse_error` column contains a conversion error message for the invalid `UTCDate` value
+
+#### Scenario: Invalid primary time falls back to valid secondary time
+- **WHEN** a game has an invalid non-empty `UTCTime` value
+- **AND** a parseable fallback time exists in `Time`
+- **THEN** the `UTCTime` column contains the parseable fallback `TIMETZ` value
+- **AND** the `parse_error` column contains a conversion error message for the invalid `UTCTime` value
+
+#### Scenario: Invalid date/time values with no parseable fallback
+- **WHEN** a game has `UTCDate`/`Date`/`EventDate` and/or `UTCTime`/`Time` headers with non-empty values
+- **AND** no candidate for the corresponding typed field can be parsed into `DATE`/`TIMETZ`
+- **THEN** the corresponding typed columns contain SQL `NULL`
+- **AND** the `parse_error` column contains conversion error message(s) for the failed field candidate(s)
 
 ### Requirement: Opening Information
 The system SHALL provide columns for chess opening classification.
@@ -176,6 +189,16 @@ The system SHALL provide a `parse_error` column containing diagnostic informatio
 - **AND** typed conversions for `UTCDate`, `UTCTime`, `WhiteElo`, and `BlackElo` succeed or the corresponding source headers are missing/empty
 - **THEN** the `parse_error` column contains NULL
 
+#### Scenario: Parser-stage failure
+- **WHEN** parser-stage game parsing fails while processing a row
+- **THEN** the row is still output with available partial data
+- **AND** the `parse_error` column is non-NULL for that row
+
+#### Scenario: Parser-stage context in parse_error
+- **WHEN** a parser-stage failure is captured in `parse_error`
+- **THEN** the message includes parser stage and source file context
+- **AND** it includes game index context when available
+
 #### Scenario: Non-fatal conversion failure
 - **WHEN** a game parses successfully but a non-empty value for `UTCDate`, `UTCTime`, `WhiteElo`, or `BlackElo` fails to convert to the target type
 - **THEN** the row is still output
@@ -185,6 +208,10 @@ The system SHALL provide a `parse_error` column containing diagnostic informatio
 #### Scenario: Multiple error messages
 - **WHEN** a row has more than one conversion failure and/or an existing PGN parsing error
 - **THEN** the `parse_error` column contains a single string containing all applicable messages
+
+#### Scenario: Parser and conversion diagnostics combined
+- **WHEN** a row has a parser-stage error and one or more typed conversion failures
+- **THEN** the `parse_error` column contains both parser and conversion diagnostics in one combined message
 
 ### Requirement: Partial Game Data Preservation
 The system SHALL preserve successfully parsed data even when parsing fails at any stage (headers, movetext, or file reading).
@@ -237,3 +264,4 @@ The system SHALL properly represent missing data using SQL NULL values instead o
 #### Scenario: Vector validity masks
 - **WHEN** outputting data to DuckDB
 - **THEN** the system sets appropriate validity masks for NULL values in each column
+

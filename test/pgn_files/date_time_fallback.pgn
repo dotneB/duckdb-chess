@@ -1,0 +1,21 @@
+[Event "Fallback Date from Date"]
+[UTCDate "2024.13.01"]
+[Date "2024.01.02"]
+[Result "*"]
+
+*
+
+[Event "Fallback Date from EventDate"]
+[UTCDate "2024.13.01"]
+[Date "????.??.??"]
+[EventDate "2024.03.04"]
+[Result "*"]
+
+*
+
+[Event "Fallback Time from Time"]
+[UTCTime "25:00:00"]
+[Time "12:34:56"]
+[Result "*"]
+
+*

@@ -29,3 +29,51 @@ No one	NULL
 # is extremely robust and recovers from almost all malformed inputs (returning partial data 
 # with no error), making it difficult to generate a synthetic parse error in tests.
 # The mechanism is implemented, but effectively unused for common malformed PGNs.
+
+# Deterministic parser-stage failure fixture should produce non-NULL parse_error.
+query I
+SELECT COUNT(*)
+FROM read_pgn('test/pgn_files/parser_stage_error.pgn')
+WHERE parse_error IS NOT NULL;
+----
+1
+
+# Parser-stage diagnostics should include stage, file context, and game index.
+query IIII
+SELECT
+  parse_error LIKE '%Parser-stage error: stage=read_game%',
+  parse_error LIKE '%parser_stage_error.pgn%',
+  parse_error LIKE '%game_index=1%',
+  parse_error LIKE '%unterminated comment%'
+FROM read_pgn('test/pgn_files/parser_stage_error.pgn')
+LIMIT 1;
+----
+true	true	true	true
+
+# Parser-stage and conversion diagnostics should be combined in a single parse_error string.
+query III
+SELECT
+  parse_error LIKE '%Conversion error: WhiteElo=%',
+  parse_error LIKE '%Conversion error: UTCDate=%',
+  parse_error LIKE '%Conversion error: UTCTime=%'
+FROM read_pgn('test/pgn_files/parser_stage_error.pgn')
+LIMIT 1;
+----
+true	true	true
+
+# Ingestion should continue to subsequent files in a glob even when one file has a parser-stage error.
+query III
+SELECT
+  COUNT(*),
+  COUNT(*) FILTER (WHERE parse_error IS NULL),
+  COUNT(*) FILTER (WHERE parse_error IS NOT NULL)
+FROM read_pgn('test/pgn_files/parser_stage_*.pgn');
+----
+2	1	1
+
+query I
+SELECT COUNT(*)
+FROM read_pgn('test/pgn_files/parser_stage_*.pgn')
+WHERE Event = 'Parser Stage Valid Game';
+----
+1

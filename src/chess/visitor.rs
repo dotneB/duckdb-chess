@@ -97,14 +97,14 @@ impl GameVisitor {
         score
     }
 
-    fn select_best_date_candidate(
+    fn rank_date_candidates(
         utc_date: Option<String>,
         date: Option<String>,
         event_date: Option<String>,
-    ) -> Option<(String, &'static str)> {
-        // Choose by completeness first; if tied, prefer header precedence:
+    ) -> Vec<(String, &'static str)> {
+        // Rank by completeness first; if tied, prefer header precedence:
         // UTCDate -> Date -> EventDate
-        let mut best: Option<(u8, u8, String, &'static str)> = None;
+        let mut ranked: Vec<(u8, u8, String, &'static str)> = Vec::new();
 
         for (precedence, raw, label) in [
             (0u8, utc_date, "UTCDate"),
@@ -118,25 +118,37 @@ impl GameVisitor {
             }
 
             let score = Self::date_completeness_score(s);
-            match &best {
-                None => best = Some((score, precedence, raw, label)),
-                Some((best_score, best_prec, _, _)) => {
-                    if score > *best_score || (score == *best_score && precedence < *best_prec) {
-                        best = Some((score, precedence, raw, label));
-                    }
-                }
+            ranked.push((score, precedence, raw, label));
+        }
+
+        ranked.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+
+        ranked
+            .into_iter()
+            .map(|(_, _, raw, label)| (raw, label))
+            .collect()
+    }
+
+    fn parse_best_date_field(
+        utc_date: Option<String>,
+        date: Option<String>,
+        event_date: Option<String>,
+        parse_error: &mut Option<String>,
+    ) -> Option<duckdb_date> {
+        for (raw, label) in Self::rank_date_candidates(utc_date, date, event_date) {
+            if let Some(parsed) = Self::parse_date_field(raw, label, parse_error) {
+                return Some(parsed);
             }
         }
 
-        best.map(|(_, _, raw, label)| (raw, label))
+        None
     }
 
     fn parse_date_field(
-        raw: Option<String>,
+        raw: String,
         label: &str,
         parse_error: &mut Option<String>,
     ) -> Option<duckdb_date> {
-        let raw = raw?;
         let s = raw.trim();
         if s.is_empty() {
             return None;
@@ -245,11 +257,10 @@ impl GameVisitor {
     }
 
     fn parse_time_tz_field(
-        raw: Option<String>,
+        raw: String,
         label: &str,
         parse_error: &mut Option<String>,
     ) -> Option<duckdb_time_tz> {
-        let raw = raw?;
         let s = raw.trim();
         if s.is_empty() {
             return None;
@@ -304,6 +315,26 @@ impl GameVisitor {
         Some(Self::pack_time_tz(micros, offset_seconds))
     }
 
+    fn parse_best_time_tz_field(
+        utc_time: Option<String>,
+        time: Option<String>,
+        parse_error: &mut Option<String>,
+    ) -> Option<duckdb_time_tz> {
+        if let Some(raw) = utc_time
+            && let Some(parsed) = Self::parse_time_tz_field(raw, "UTCTime", parse_error)
+        {
+            return Some(parsed);
+        }
+
+        if let Some(raw) = time
+            && let Some(parsed) = Self::parse_time_tz_field(raw, "UTCTime (from Time)", parse_error)
+        {
+            return Some(parsed);
+        }
+
+        None
+    }
+
     #[cfg(not(test))]
     fn pack_time_tz(micros: i64, offset_seconds: i32) -> duckdb_time_tz {
         create_time_tz(micros, offset_seconds)
@@ -341,26 +372,17 @@ impl GameVisitor {
         let black_elo =
             Self::parse_uinteger_field(self.get_header("BlackElo"), "BlackElo", &mut parse_error);
 
-        let utc_date_candidate = Self::select_best_date_candidate(
+        let utc_date = Self::parse_best_date_field(
             self.get_header("UTCDate"),
             self.get_header("Date"),
             self.get_header("EventDate"),
+            &mut parse_error,
         );
-        let (utc_date_raw, utc_date_label) = match utc_date_candidate {
-            Some((raw, label)) => (Some(raw), label),
-            None => (None, "UTCDate"),
-        };
-        let utc_date = Self::parse_date_field(utc_date_raw, utc_date_label, &mut parse_error);
-
-        let utc_time_raw = self
-            .get_header("UTCTime")
-            .or_else(|| self.get_header("Time"));
-        let utc_time_label = if self.get_header("UTCTime").is_some() {
-            "UTCTime"
-        } else {
-            "UTCTime (from Time)"
-        };
-        let utc_time = Self::parse_time_tz_field(utc_time_raw, utc_time_label, &mut parse_error);
+        let utc_time = Self::parse_best_time_tz_field(
+            self.get_header("UTCTime"),
+            self.get_header("Time"),
+            &mut parse_error,
+        );
 
         self.current_game = Some(GameRecord {
             event: self.get_header("Event"),
@@ -395,26 +417,17 @@ impl GameVisitor {
         let black_elo =
             Self::parse_uinteger_field(self.get_header("BlackElo"), "BlackElo", &mut parse_error);
 
-        let utc_date_candidate = Self::select_best_date_candidate(
+        let utc_date = Self::parse_best_date_field(
             self.get_header("UTCDate"),
             self.get_header("Date"),
             self.get_header("EventDate"),
+            &mut parse_error,
         );
-        let (utc_date_raw, utc_date_label) = match utc_date_candidate {
-            Some((raw, label)) => (Some(raw), label),
-            None => (None, "UTCDate"),
-        };
-        let utc_date = Self::parse_date_field(utc_date_raw, utc_date_label, &mut parse_error);
-
-        let utc_time_raw = self
-            .get_header("UTCTime")
-            .or_else(|| self.get_header("Time"));
-        let utc_time_label = if self.get_header("UTCTime").is_some() {
-            "UTCTime"
-        } else {
-            "UTCTime (from Time)"
-        };
-        let utc_time = Self::parse_time_tz_field(utc_time_raw, utc_time_label, &mut parse_error);
+        let utc_time = Self::parse_best_time_tz_field(
+            self.get_header("UTCTime"),
+            self.get_header("Time"),
+            &mut parse_error,
+        );
 
         self.current_game = Some(GameRecord {
             event: self.get_header("Event"),
@@ -444,6 +457,7 @@ impl GameVisitor {
 pub struct PgnReaderState {
     pub pgn_reader: Reader<File>,
     pub path_idx: usize,
+    pub next_game_index: usize,
     pub record_buffer: GameRecord,
     pub visitor: GameVisitor,
 }
@@ -453,6 +467,7 @@ impl PgnReaderState {
         Self {
             pgn_reader: Reader::new(file),
             path_idx,
+            next_game_index: 1,
             record_buffer: GameRecord::default(),
             visitor: GameVisitor::new(),
         }

@@ -26,3 +26,27 @@ FROM read_pgn('test/pgn_files/invalid_types.pgn')
 LIMIT 1;
 ----
 true	true	true	true	true	true	true	true	true
+
+# Invalid primary date/time can recover from fallback headers while retaining parse_error diagnostics.
+query TTTT
+SELECT
+  Event,
+  strftime(UTCDate, '%Y-%m-%d'),
+  parse_error LIKE '%Conversion error: UTCDate=%',
+  parse_error LIKE '%chrono:%'
+FROM read_pgn('test/pgn_files/date_time_fallback.pgn')
+WHERE Event IN ('Fallback Date from Date', 'Fallback Date from EventDate')
+ORDER BY Event;
+----
+Fallback Date from Date	2024-01-02	true	true
+Fallback Date from EventDate	2024-03-04	true	true
+
+query III
+SELECT
+  UTCTime IS NOT NULL,
+  parse_error LIKE '%Conversion error: UTCTime=%',
+  parse_error LIKE '%chrono:%'
+FROM read_pgn('test/pgn_files/date_time_fallback.pgn')
+WHERE Event = 'Fallback Time from Time';
+----
+true	true	true
