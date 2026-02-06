@@ -113,7 +113,7 @@ The system SHALL use the pgn-reader library's `Reader` and `Visitor` trait for s
 #### Scenario: Game parsing via read_game
 - **WHEN** the table function needs to parse the next game
 - **THEN** it calls `read_game(&mut visitor)` on the `Reader<File>` instance
-- **AND** the visitor's methods (`begin_tags`, `tag`, `begin_movetext`, `san`, `outcome`, `comment`, `end_game`) are invoked by the reader
+- **AND** the visitor methods (`begin_tags`, `tag`, `begin_movetext`, `san`, `outcome`, `comment`, `end_game`) are invoked by the reader
 
 #### Scenario: Header tag collection
 - **WHEN** the visitor encounters PGN header tags
@@ -131,9 +131,9 @@ The system SHALL use the pgn-reader library's `Reader` and `Visitor` trait for s
 
 #### Scenario: Result marker capture
 - **WHEN** the visitor's `outcome()` method is called with an Outcome enum
-- **THEN** it converts the Outcome to string representation ("1-0", "0-1", "1/2-1/2", or "*")
-- **AND** it stores the result marker for inclusion in movetext output
-- **AND** the result marker is appended to the movetext string after all moves
+- **THEN** it converts the Outcome to string representation (`1-0`, `0-1`, `1/2-1/2`, or `*`)
+- **AND** it stores the result marker for game-level result metadata
+- **AND** the result marker is NOT appended to the movetext output string
 
 #### Scenario: EOF detection
 - **WHEN** `read_game()` is called and the file has been fully consumed

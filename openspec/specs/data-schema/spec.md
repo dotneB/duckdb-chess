@@ -166,16 +166,17 @@ The system SHALL provide a column containing the parsed mainline movetext in a P
 
 #### Scenario: Movetext format
 - **WHEN** movetext is stored
-- **THEN** it uses Standard Algebraic Notation with move numbers (e.g., "1. e4 e5 2. Nf3 Nc6")
+- **THEN** it uses Standard Algebraic Notation with move numbers (e.g., `1. e4 e5 2. Nf3 Nc6`)
 - **AND** variations are not included (mainline only)
 
 #### Scenario: Movetext always present
 - **WHEN** a game is parsed successfully
-- **THEN** the movetext column always contains a non-NULL value (empty string if no moves and no result marker)
+- **THEN** the movetext column always contains a non-NULL value (empty string if no mainline moves)
 
-#### Scenario: Result marker in movetext
-- **WHEN** a game has a result (from termination marker or Result header)
-- **THEN** the movetext includes the result marker as the final token (1-0, 0-1, 1/2-1/2, or *)
+#### Scenario: Result marker is not embedded in movetext
+- **WHEN** a game has a result (from movetext outcome marker or `Result` header)
+- **THEN** the movetext column does NOT append a terminal result marker token (`1-0`, `0-1`, `1/2-1/2`, or `*`)
+- **AND** game result metadata is exposed through the `Result` column
 
 ### Requirement: Parse Error Column
 The system SHALL provide a `parse_error` column containing diagnostic information about parsing failures and non-fatal field conversion failures.

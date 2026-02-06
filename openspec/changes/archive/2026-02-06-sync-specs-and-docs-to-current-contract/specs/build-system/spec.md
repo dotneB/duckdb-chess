@@ -1,8 +1,5 @@
-# build-system Specification
+## MODIFIED Requirements
 
-## Purpose
-To define a Rust-first build and validation workflow for this DuckDB extension while preserving compatibility with DuckDB community extension template wiring.
-## Requirements
 ### Requirement: Rust-Only Build System
 The project MUST provide a Rust-first local workflow for building, linting, and testing the extension.
 
@@ -17,14 +14,6 @@ The primary local workflow SHALL use Rust/cargo tooling (`cargo duckdb-ext-build
 - **THEN** `extension-ci-tools` and Python/venv-based tooling may be required as a compatibility path
 - **AND** this does not replace the Rust-first local workflow
 
-### Requirement: Modern Extension Macros
-The project MUST use `duckdb-ext-macros` for extension entrypoint registration.
-
-#### Scenario: Macro dependency
-- **WHEN** checking extension macro dependencies
-- **THEN** the project depends on `duckdb-ext-macros`
-- **AND** it does not depend on `duckdb-loadable-macros`
-
 ### Requirement: Native Build Tools
 The project MUST use `duckdb-ext-macros` and `cargo-duckdb-ext-tools` for extension build and packaging workflows.
 
@@ -36,13 +25,6 @@ The project MUST use `duckdb-ext-macros` and `cargo-duckdb-ext-tools` for extens
 #### Scenario: Tool installation pin
 - **WHEN** installing extension build tooling from repository wrappers
 - **THEN** `cargo-duckdb-ext-tools` is installed from the pinned repository/branch used by this project configuration
-
-### Requirement: Rust 2024 Edition
-The project MUST target Rust 2024 Edition.
-
-#### Scenario: Edition configuration
-- **WHEN** checking crate metadata
-- **THEN** `Cargo.toml` specifies `edition = "2024"`
 
 ### Requirement: Simplified CI/CD
 The project MUST keep CI/CD and template wiring compatible with DuckDB community extension expectations while preserving straightforward Rust build commands.
@@ -67,11 +49,3 @@ The project MUST provide Make targets for local Rust workflows and MAY include a
 - **WHEN** a Makefile is present
 - **THEN** it provides wrappers for local Rust-first workflows (`check`, `build-rs`, `release-rs`, `test-rs`, `dev`)
 - **AND** it may also include template-compatibility targets that require extra tooling
-
-### Requirement: Cross-Platform Support
-The build system MUST support DuckDB target platforms.
-
-#### Scenario: Target platforms
-- **WHEN** building extension artifacts for release
-- **THEN** workflows can target Linux, macOS, and Windows DuckDB extension platforms
-

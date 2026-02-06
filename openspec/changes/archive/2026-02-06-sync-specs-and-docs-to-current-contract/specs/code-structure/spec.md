@@ -1,8 +1,5 @@
-# code-structure Specification
+## MODIFIED Requirements
 
-## Purpose
-To define the repository module layout and extension entrypoint wiring used by the current `src/chess/*` architecture.
-## Requirements
 ### Requirement: Shared Domain Types Module
 The project MUST define shared domain structures in a dedicated `types` module to prevent circular dependencies and promote reuse.
 
@@ -53,42 +50,3 @@ The project MUST use the modern `#[duckdb_extension]` macro for extension entryp
 - **WHEN** reviewing `extension_entrypoint`
 - **THEN** it uses `#[duckdb_extension(name = "chess", api_version = "v1.0.0")]`
 - **AND** legacy entrypoint macros are not used
-
-### Requirement: Unit Test Support
-The project MUST support unit testing for core logic modules to ensure reliability and facilitate refactoring.
-
-#### Scenario: Filter logic testing
-- **WHEN** `cargo test` is run
-- **THEN** movetext normalization and filtering behavior is verified without requiring database setup
-
-#### Scenario: Visitor logic testing
-- **WHEN** `cargo test` is run
-- **THEN** `GameVisitor` parsing behavior is verified against PGN fragments without requiring full file ingestion workflows
-
-### Requirement: Test Data Organization
-All PGN test data files MUST be located within `test/pgn_files/` to maintain a clean structure.
-
-#### Scenario: Data location
-- **WHEN** a new PGN fixture is added
-- **THEN** it is placed in `test/pgn_files/`
-- **AND** `test/` root does not contain loose `.pgn` fixtures
-
-### Requirement: Centralized DuckDB String Decoding Safety
-The project MUST implement DuckDB scalar string decoding through a shared helper module rather than duplicated per-module unsafe implementations.
-
-The shared helper MUST document its unsafe contract with explicit `SAFETY` guidance.
-
-#### Scenario: Shared helper usage
-- **WHEN** scalar functions decode `duckdb_string_t` input arguments
-- **THEN** they call a shared decoding helper from a single module
-- **AND** duplicated `read_duckdb_string` implementations are not present in multiple scalar modules
-
-#### Scenario: Safety contract documentation
-- **WHEN** reviewing the shared decoder implementation
-- **THEN** the unsafe boundary includes a `SAFETY` explanation describing required preconditions for valid reads
-
-#### Scenario: Null checks before decoding
-- **WHEN** a scalar function row contains NULL input for a string argument
-- **THEN** the scalar invoke path checks row nullability before calling the shared decoding helper
-- **AND** behavior remains consistent with prior NULL handling semantics
-

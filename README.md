@@ -51,43 +51,41 @@ FROM g,
      json_each(CAST(chess_moves_json(g.movetext, 40) AS JSON)) m;
 ```
 
-## Development 
+## Development
+
 ### Prerequisites
 
-- **Rust toolchain** (1.89+): https://rustup.rs/
-- **DuckDB** built for 1.4.4
+- **Rust toolchain**: repo toolchain is `1.93` (`rust-toolchain.toml`), minimum supported Rust version for this crate (MSRV) is `1.89`
+- **DuckDB** `1.4.4`
 - Run `make install-tools` to install:
   - **cargo-duckdb-ext-tools**: A Rust-based toolkit for building and packaging DuckDB extensions without Python dependencies
   - **duckdb-slt**: A Rust-based sqllogictest runner for DuckDB.
 
-#### Note on Python:
-This project migrated to use the [duckdb-ext-rs-template](https://github.com/redraiment/duckdb-ext-rs-template) by [@redraiment](https://github.com/redraiment). This toolset only requires Rust to be installed to build the extension.  
-I do keep the `extension-ci-tools` submodule and the original commands from the [official community template](https://github.com/duckdb/extension-template-rs) in `Makefile` to be able to test in CI if the same build would succeed when submitting to the [Community Extensions Repository](https://github.com/duckdb/community-extensions/). Running any of these commands do require python and python-env.
-
-### Build
-
-Debug:
+### Build and Test Commands
 
 ```shell
-cargo duckdb-ext-build
-# or use the wrapper to run (build + check + tests)
-make dev
+# format + lint
+make check
+
+# build
+make build-rs # (debug)
+make release-rs # (release)
+
+# tests (unit + SQLLogicTest)
+make test-rs # (debug)
+make test-release-rs # (release)
+
+# main dev loop
+make dev # (debug)
 ```
 
-Release:
+The wrappers call Rust-first commands (`cargo duckdb-ext-build`, `cargo test`, `cargo fmt`, `cargo clippy`).
 
-```shell
-cargo duckdb-ext-build -- --release
-# or use the wrapper
-make release-rs
-```
+### Template Compatibility Note
 
-Artifacts:
+`extension-ci-tools/` is kept for DuckDB community extension template compatibility. Local Rust-first targets above do not require Python/venv, but template/CI compatibility targets may.
 
-- `target/debug/chess.duckdb_extension`
-- `target/release/chess.duckdb_extension`
-
-#### Load
+### Load
 
 Local builds are unsigned; start DuckDB with `-unsigned`:
 
@@ -101,43 +99,18 @@ Then:
 LOAD './target/release/chess.duckdb_extension';
 ```
 
-### Rust Unit Tests
-
-```shell
-cargo test
-```
-
-This runs Rust unit tests covering the core chess parsing and move analysis logic.
-
-### Integration Tests
-
-```shell
-duckdb-slt.exe -e ./target/debug/$(EXTENSION_NAME).duckdb_extension -u -w "$(CURDIR)" "$(CURDIR)/test/sql/*.test"
-```
-This runs the SQLLogicTest against the tests in `test/sql/`
-
 ### Version Compatibility
 
-This extension is built for **DuckDB 1.4.4**.
-
-**Note**: The old template used `USE_UNSTABLE_C_API=1` which required exact version matching. The modern build system aims for better compatibility, but version matching may still be required depending on DuckDB API changes.
-
-### Architecture
-
-This extension uses:
-- **Rust 2024 Edition** for modern language features
-- **duckdb-ext-macros** (0.1.0) for extension macros
-- **cargo-duckdb-ext-tools** for packaging
-- **pgn-reader** (0.28) for PGN parsing
-- **shakmaty** (0.29) for chess logic
-
-The build system is pure Rust with no Python or Make dependencies required for building (though the Makefile is provided for convenience).
+- DuckDB dependencies are pinned to `=1.4.4`
+- `duckdb-ext-macros = 0.1.0`
+- `pgn-reader = 0.29`
+- `shakmaty = 0.30`
 
 ### Contributing
 
 1. Make changes to the source code
-2. Run dev wrapper: `make dev`
-3. Bun release wrapper: `make test-release-rs`
+2. Run the main workflow: `make dev`
+3. Run release checks: `make test-release-rs`
 4. Test manually with DuckDB CLI
 
 ## Usage
@@ -160,7 +133,8 @@ FROM read_pgn('lichess_db_2024-*.pgn');
 Notes:
 
 - Glob expansion currently triggers when `path_pattern` contains `*` or `?`.
-- `movetext` is the mainline only; variations are skipped, `{ ... }` comments are preserved.
+- `movetext` is mainline only; variations are skipped, `{ ... }` comments are preserved.
+- Terminal result markers are not appended to `movetext`; use the `Result` column for game result metadata.
 - If a game fails to parse, you still get a row with `parse_error` set.
 - When reading multiple files (via glob), unreadable files are skipped with a warning; a single explicit file path fails hard.
 
@@ -173,6 +147,56 @@ SELECT chess_moves_normalize('1. e4! {comment} e5?? $1 2. Nf3') AS clean;
 SELECT chess_moves_hash('e4 e5 Nf3 Nc6') AS h;          -- UBIGINT
 SELECT chess_ply_count('1. e4 e5 2. Nf3') AS ply_count;  -- BIGINT
 ```
+
+### Subset Filtering Patterns
+
+Use the pattern that matches your data quality and workload.
+
+| Data shape                                                        | Recommended pattern                  | Why                              |
+| ----------------------------------------------------------------- | ------------------------------------ | -------------------------------- |
+| Raw/noisy movetext (comments, NAGs, variations, mixed formatting) | `chess_moves_subset(short, long)`    | Parser-backed subset semantics   |
+| Canonical/materialized movetext (already normalized)              | `starts_with(long_norm, short_norm)` | Faster repeated prefix filtering |
+
+Raw/noisy workflow:
+
+```sql
+SELECT *
+FROM read_pgn('games/*.pgn')
+WHERE chess_moves_subset('1. e4 e5 2. Nf3', movetext);
+```
+
+Canonical/materialized workflow:
+
+```sql
+CREATE OR REPLACE TABLE games_norm AS
+SELECT
+  *,
+  chess_moves_normalize(movetext) AS movetext_norm
+FROM read_pgn('games/*.pgn')
+WHERE parse_error IS NULL;
+
+WITH needle AS (
+  SELECT chess_moves_normalize('1. e4 e5 2. Nf3') AS short_norm
+)
+SELECT g.*
+FROM games_norm g, needle n
+WHERE starts_with(g.movetext_norm, n.short_norm);
+```
+
+`contains` is not subset-prefix semantics:
+
+```sql
+SELECT
+  contains('1. d4 d5 2. e4 e5', 'e4 e5') AS contains_match,
+  chess_moves_subset('e4 e5', '1. d4 d5 2. e4 e5') AS subset_match;
+-- contains_match = true, subset_match = false
+```
+
+Caveats:
+
+- `read_pgn(...).movetext` does not include a terminal result marker (`1-0`, `0-1`, `1/2-1/2`, `*`).
+- `starts_with` is only safe when both sides are canonicalized with the same normalization pipeline.
+- If input quality is uncertain, prefer `chess_moves_subset`.
 
 ### Turn Movetext Into Positions (FEN/EPD)
 
@@ -249,26 +273,26 @@ Reads chess games from one or more PGN files.
 
 Returned columns:
 
-| Column      | Type     | Notes                                     |
-| ----------- | -------- | ----------------------------------------- |
-| Event       | VARCHAR  | PGN tag                                   |
-| Site        | VARCHAR  | PGN tag                                   |
-| White       | VARCHAR  | PGN tag                                   |
-| Black       | VARCHAR  | PGN tag                                   |
-| Result      | VARCHAR  | PGN tag                                   |
-| WhiteTitle  | VARCHAR  | PGN tag (nullable)                        |
-| BlackTitle  | VARCHAR  | PGN tag (nullable)                        |
-| WhiteElo    | UINTEGER | PGN tag (nullable)                        |
-| BlackElo    | UINTEGER | PGN tag (nullable)                        |
-| UTCDate     | DATE     | PGN tag (nullable)                        |
-| UTCTime     | TIMETZ   | PGN tag (nullable, treated as UTC)        |
-| ECO         | VARCHAR  | PGN tag                                   |
-| Opening     | VARCHAR  | PGN tag                                   |
-| Termination | VARCHAR  | PGN tag                                   |
-| TimeControl | VARCHAR  | PGN tag                                   |
-| movetext    | VARCHAR  | Raw mainline, includes `{...}` comments   |
-| parse_error | VARCHAR  | NULL on success; error message on failure |
-| Source      | VARCHAR  | PGN tag (nullable)                        |
+| Column      | Type     | Notes                                                               |
+| ----------- | -------- | ------------------------------------------------------------------- |
+| Event       | VARCHAR  | PGN tag                                                             |
+| Site        | VARCHAR  | PGN tag                                                             |
+| White       | VARCHAR  | PGN tag                                                             |
+| Black       | VARCHAR  | PGN tag                                                             |
+| Result      | VARCHAR  | PGN tag                                                             |
+| WhiteTitle  | VARCHAR  | PGN tag (nullable)                                                  |
+| BlackTitle  | VARCHAR  | PGN tag (nullable)                                                  |
+| WhiteElo    | UINTEGER | PGN tag (nullable)                                                  |
+| BlackElo    | UINTEGER | PGN tag (nullable)                                                  |
+| UTCDate     | DATE     | PGN tag (nullable)                                                  |
+| UTCTime     | TIMETZ   | PGN tag (nullable, treated as UTC)                                  |
+| ECO         | VARCHAR  | PGN tag                                                             |
+| Opening     | VARCHAR  | PGN tag                                                             |
+| Termination | VARCHAR  | PGN tag                                                             |
+| TimeControl | VARCHAR  | PGN tag                                                             |
+| movetext    | VARCHAR  | Mainline only, includes `{...}` comments, no terminal result marker |
+| parse_error | VARCHAR  | NULL on success; error message on failure                           |
+| Source      | VARCHAR  | PGN tag (nullable)                                                  |
 
 ### Scalar Functions
 
@@ -279,7 +303,7 @@ Returned columns:
 | `chess_ply_count(movetext)`                         | BIGINT  | Ply count (NULL-safe macro)                                                                                      |
 | `chess_moves_json(movetext, max_ply := NULL)`       | VARCHAR | JSON string of `{ply, move, fen, epd}` (NULL-safe macro)                                                         |
 | `chess_fen_epd(fen)`                                | VARCHAR | Converts FEN to EPD join key (board/side/castling/ep)                                                            |
-| `chess_moves_subset(short_movetext, long_movetext)` | BOOLEAN | True if normalized `short` is a prefix of normalized `long`                                                      |
+| `chess_moves_subset(short_movetext, long_movetext)` | BOOLEAN | True if `short` mainline is a prefix of `long` mainline                                                          |
 
 
 ## License
