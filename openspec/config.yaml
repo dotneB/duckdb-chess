@@ -18,8 +18,9 @@ context: |
   - Prefer Result-based error handling; avoid panics.
   Tests:
   - TDD, Red-Green: write failing test first, then implement to pass.
-  - Dev flow: `make dev`. It runs checks (fmt, clippy), builds in debug, runs tests (both unit and SQLLogicTest).
-  - Release flow: `make test-release-rs`. It builds optimized release and runs tests (both unit and SQLLogicTest).
+  - Dev flow: `just dev`. It runs checks (fmt, clippy), builds in debug, runs tests (both unit and SQLLogicTest).
+  - Full flow: `just full`. It runs checks, builds in debug and release, runs tests on both.
+  - Release flow: `just test-release`. It builds optimized release and runs tests (both unit and SQLLogicTest).
   - SQLLogicTest: `test/sql/*.test` (must start with `require chess`).
   - Sample PGNs: `test/pgn_files/`
   Constraints:

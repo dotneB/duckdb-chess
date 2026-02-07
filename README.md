@@ -57,7 +57,7 @@ FROM g,
 
 - **Rust toolchain**: repo toolchain is `1.93` (`rust-toolchain.toml`), minimum supported Rust version for this crate (MSRV) is `1.89`
 - **DuckDB** `1.4.4`
-- Run `make install-tools` to install:
+- Run `just install-tools` to install:
   - **cargo-duckdb-ext-tools**: A Rust-based toolkit for building and packaging DuckDB extensions without Python dependencies
   - **duckdb-slt**: A Rust-based sqllogictest runner for DuckDB.
 
@@ -65,21 +65,21 @@ FROM g,
 
 ```shell
 # format + lint
-make check
+just check
 
 # build
-make build-rs # (debug)
-make release-rs # (release)
+just debug # (debug)
+just release # (release)
 
 # tests (unit + SQLLogicTest)
-make test-rs # (debug)
-make test-release-rs # (release)
+just test # (debug)
+just test-release # (release)
 
 # main dev loop
-make dev # (debug)
+just dev # (debug)
 ```
 
-The wrappers call Rust-first commands (`cargo duckdb-ext-build`, `cargo test`, `cargo fmt`, `cargo clippy`).
+The `just` recipes call Rust-first commands (`cargo duckdb-ext-build`, `cargo test`, `cargo fmt`, `cargo clippy`).
 
 ### Template Compatibility Note
 
@@ -99,18 +99,11 @@ Then:
 LOAD './target/release/chess.duckdb_extension';
 ```
 
-### Version Compatibility
-
-- DuckDB dependencies are pinned to `=1.4.4`
-- `duckdb-ext-macros = 0.1.0`
-- `pgn-reader = 0.29`
-- `shakmaty = 0.30`
-
 ### Contributing
 
 1. Make changes to the source code
-2. Run the main workflow: `make dev`
-3. Run release checks: `make test-release-rs`
+2. Run the main workflow: `just dev`
+3. Run release checks: `just test-release`
 4. Test manually with DuckDB CLI
 
 ## Usage

@@ -4,28 +4,18 @@ Primary entrypoint: `read_pgn(path_pattern)` table function.
 Helper scalar functions: `chess_*` (movetext normalization, hashing, ply count, FEN->EPD, JSON position tracing).
 
 
-Hard constraints (do not drift)
-
-- DuckDB target: 1.4.4 (`duckdb` + `libduckdb-sys` pinned to `=1.4.4`)
-- Rust edition: 2024
-- Rust MSRV: 1.89.0 (`Cargo.toml: rust-version = "1.89"`)
-- Repo toolchain: Rust 1.93 (`rust-toolchain.toml`)
-- Extension build tooling:
-  - `duckdb-ext-macros = 0.1.0`
-  - `cargo-duckdb-ext-tools` pinned to branch `fix/windows-build` (see `Makefile: install-tools`)
-
-
 Build / lint / test commands (golden paths)
 
-- Install tooling (run once): `make install-tools`
-- Format + lint: `make check` (runs `cargo fmt --check` + `cargo clippy -- -D warnings`)
-- Dev loop (lint + debug build + tests): `make dev`
+- Install tooling (run once): `just install-tools`
+- Format + lint: `just check` (runs `cargo fmt --check` + `cargo clippy -- -D warnings`)
+- Dev loop (lint + debug build + tests): `just dev`
+- Full loop (lint + debug build + tests + release build + tests in release): `just full`
 - Build:
-  - Debug: `make build-rs` (wraps `cargo duckdb-ext-build`)
-  - Release: `make release-rs` (wraps `cargo duckdb-ext-build -- --release`)
+  - Debug: `just debug` (wraps `cargo duckdb-ext-build`)
+  - Release: `just release` (wraps `cargo duckdb-ext-build -- --release`)
 - Tests:
-  - Debug (unit + SQLLogicTest): `make test-rs`
-  - Release (unit + SQLLogicTest): `make test-release-rs`
+  - Debug (unit + SQLLogicTest): `just test`
+  - Release (unit + SQLLogicTest): `just test-release`
 
 
 Running a single test
@@ -39,13 +29,13 @@ Rust tests
 SQLLogicTest (DuckDB integration)
 
 - One file (debug build):
-  - `make build-rs && duckdb-slt.exe -e ./target/debug/chess.duckdb_extension -u -w "%CD%" "test/sql/read_pgn.test"`
+  - `just debug && duckdb-slt.exe -e ./target/debug/chess.duckdb_extension -u -w "%CD%" "test/sql/read_pgn.test"`
 - One file (release build):
-  - `make release-rs && duckdb-slt.exe -e ./target/release/chess.duckdb_extension -u -w "%CD%" "test/sql/read_pgn.test"`
+  - `just release && duckdb-slt.exe -e ./target/release/chess.duckdb_extension -u -w "%CD%" "test/sql/read_pgn.test"`
 
 Notes
 
-- `make test-rs` / `make test-release-rs` run all `test/sql/*.test`.
+- `just test` / `just test-release` run all `test/sql/*.test`.
 - On non-Windows environments the runner binary is `duckdb-slt` (no `.exe`).
 
 
@@ -93,7 +83,7 @@ Code style guidelines (Rust)
 
 Formatting / lint
 
-- Always run `make check` before committing.
+- Always run `just check` before committing.
 - Use rustfmt defaults; do not hand-format around rustfmt.
 - Clippy warnings are treated as errors (`-D warnings`).
 

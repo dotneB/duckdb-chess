@@ -6,11 +6,11 @@ To define a Rust-first build and validation workflow for this DuckDB extension w
 ### Requirement: Rust-Only Build System
 The project MUST provide a Rust-first local workflow for building, linting, and testing the extension.
 
-The primary local workflow SHALL use Rust/cargo tooling (`cargo duckdb-ext-build`, `cargo test`, `cargo fmt`, `cargo clippy`) and repository wrappers in `Makefile`.
+The primary local workflow SHALL use Rust/cargo tooling (`cargo duckdb-ext-build`, `cargo test`, `cargo fmt`, `cargo clippy`) and repository wrappers in `justfile`.
 
 #### Scenario: Rust-first development workflow
 - **WHEN** a contributor builds and tests locally
-- **THEN** they can use `make check`, `make build-rs`, `make test-rs`, and `make dev` without Python-specific setup
+- **THEN** they can use `just install-tools`, `just check`, `just debug`, `just test`, and `just dev` without Python-specific setup
 
 #### Scenario: Template compatibility path
 - **WHEN** template/community-extension Make targets are used
@@ -55,18 +55,20 @@ The project MUST keep CI/CD and template wiring compatible with DuckDB community
 ### Requirement: DuckDB Version Compatibility
 The project MUST pin DuckDB dependencies and build targets to the repository's current supported DuckDB version.
 
-#### Scenario: Version specification
-- **WHEN** checking dependency and build target configuration
-- **THEN** `duckdb` and `libduckdb-sys` are pinned to `=1.4.4` in `Cargo.toml`
-- **AND** Makefile target version is `v1.4.4`
+### Requirement: Justfile Local Wrappers
+The project MUST provide `just` recipes for local Rust-first workflows.
+
+#### Scenario: justfile usage
+- **WHEN** a `justfile` is present
+- **THEN** it provides wrappers for local Rust-first workflows (`install-tools`, `check`, `debug`, `release`, `test`, `test-release`, `dev`)
 
 ### Requirement: Optional Makefile
-The project MUST provide Make targets for local Rust workflows and MAY include additional template-compatibility targets.
+The project MAY provide Make targets for template/community-extension compatibility paths.
 
 #### Scenario: Makefile usage
 - **WHEN** a Makefile is present
-- **THEN** it provides wrappers for local Rust-first workflows (`check`, `build-rs`, `release-rs`, `test-rs`, `dev`)
-- **AND** it may also include template-compatibility targets that require extra tooling
+- **THEN** it is used for `extension-ci-tools` compatibility wiring
+- **AND** local Rust-first workflows are documented via `just` recipes
 
 ### Requirement: Cross-Platform Support
 The build system MUST support DuckDB target platforms.
@@ -74,4 +76,3 @@ The build system MUST support DuckDB target platforms.
 #### Scenario: Target platforms
 - **WHEN** building extension artifacts for release
 - **THEN** workflows can target Linux, macOS, and Windows DuckDB extension platforms
-
