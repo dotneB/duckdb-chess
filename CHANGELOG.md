@@ -1,3 +1,20 @@
+## [0.3.0] - 2026-02-07
+
+### 🚀 Features
+
+- Add parsing of the Source header
+- Chess_moves_subset early out
+- Improve parsing error handling
+
+### 🚜 Refactor
+
+- Centralize duckdb_string handling
+
+### ⚙️ Miscellaneous Tasks
+
+- Update specs and README.md
+- Split Makefile and justfile
+
 ## [0.2.0] - 2026-02-03
 
 ### 🚀 Features
