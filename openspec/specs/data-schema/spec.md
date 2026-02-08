@@ -103,6 +103,11 @@ The system SHALL provide typed columns for game timestamp with fallback support,
 - **WHEN** a game has `UTCDate`/`Date` with value "2000.06.??" (or the equivalent "2000-06-??")
 - **THEN** the `UTCDate` column contains a `DATE` representing 2000-06-01
 
+#### Scenario: Out-of-range day is clamped to month end
+- **WHEN** a game has `UTCDate`/`Date`/`EventDate` with valid year and month but day greater than the last day of that month (for example `2015.11.31` or `1997.02.29`)
+- **THEN** the candidate date is normalized to the last valid day of that month (for example `2015-11-30` or `1997-02-28`)
+- **AND** the normalized value is eligible for normal header precedence and fallback selection
+
 #### Scenario: UTC time column
 - **WHEN** a game has a `UTCTime` header with value "12:00:00" or "12:00:00Z"
 - **THEN** the `UTCTime` column contains a `TIMETZ` representing 12:00:00+00:00
@@ -116,7 +121,7 @@ The system SHALL provide typed columns for game timestamp with fallback support,
 - **THEN** the `UTCTime` column contains a `TIMETZ` representing the provided local time with the provided offset
 
 #### Scenario: Invalid primary date falls back to valid secondary date
-- **WHEN** a game has an invalid non-empty `UTCDate` value
+- **WHEN** a game has an invalid non-empty `UTCDate` value that cannot be parsed after day-overflow normalization
 - **AND** a parseable fallback date exists in `Date` or `EventDate`
 - **THEN** the `UTCDate` column contains the parseable fallback `DATE` value
 - **AND** the `parse_error` column contains a conversion error message for the invalid `UTCDate` value
@@ -129,7 +134,7 @@ The system SHALL provide typed columns for game timestamp with fallback support,
 
 #### Scenario: Invalid date/time values with no parseable fallback
 - **WHEN** a game has `UTCDate`/`Date`/`EventDate` and/or `UTCTime`/`Time` headers with non-empty values
-- **AND** no candidate for the corresponding typed field can be parsed into `DATE`/`TIMETZ`
+- **AND** no candidate for the corresponding typed field can be parsed into `DATE`/`TIMETZ` after day-overflow normalization
 - **THEN** the corresponding typed columns contain SQL `NULL`
 - **AND** the `parse_error` column contains conversion error message(s) for the failed field candidate(s)
 
@@ -265,4 +270,3 @@ The system SHALL properly represent missing data using SQL NULL values instead o
 #### Scenario: Vector validity masks
 - **WHEN** outputting data to DuckDB
 - **THEN** the system sets appropriate validity masks for NULL values in each column
-

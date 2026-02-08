@@ -97,6 +97,18 @@ impl GameVisitor {
         score
     }
 
+    fn last_day_of_month(year: i32, month: u32) -> Option<u32> {
+        let first_day_next_month = if month == 12 {
+            let next_year = year.checked_add(1)?;
+            NaiveDate::from_ymd_opt(next_year, 1, 1)?
+        } else {
+            let next_month = month.checked_add(1)?;
+            NaiveDate::from_ymd_opt(year, next_month, 1)?
+        };
+
+        first_day_next_month.pred_opt().map(|d| d.day())
+    }
+
     fn rank_date_candidates(
         utc_date: Option<String>,
         date: Option<String>,
@@ -189,14 +201,55 @@ impl GameVisitor {
             parts[2]
         };
 
-        let full = format!("{year_s}-{month_s}-{day_s}");
-
-        let date = match NaiveDate::parse_from_str(&full, "%Y-%m-%d") {
+        let year = match year_s.parse::<i32>() {
             Ok(v) => v,
             Err(e) => {
                 Self::push_error(
                     parse_error,
                     format!("Conversion error: {label}='{s}' (chrono: {e})"),
+                );
+                return None;
+            }
+        };
+        let month = match month_s.parse::<u32>() {
+            Ok(v) => v,
+            Err(e) => {
+                Self::push_error(
+                    parse_error,
+                    format!("Conversion error: {label}='{s}' (chrono: {e})"),
+                );
+                return None;
+            }
+        };
+        let mut day = match day_s.parse::<u32>() {
+            Ok(v) => v,
+            Err(e) => {
+                Self::push_error(
+                    parse_error,
+                    format!("Conversion error: {label}='{s}' (chrono: {e})"),
+                );
+                return None;
+            }
+        };
+
+        let Some(last_day) = Self::last_day_of_month(year, month) else {
+            Self::push_error(
+                parse_error,
+                format!("Conversion error: {label}='{s}' (chrono: input is out of range)"),
+            );
+            return None;
+        };
+
+        if day > last_day {
+            day = last_day;
+        }
+
+        let date = match NaiveDate::from_ymd_opt(year, month, day) {
+            Some(v) => v,
+            None => {
+                Self::push_error(
+                    parse_error,
+                    format!("Conversion error: {label}='{s}' (chrono: input is out of range)"),
                 );
                 return None;
             }

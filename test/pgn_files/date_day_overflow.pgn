@@ -1,0 +1,26 @@
+[Event "A Clamp UTCDate 30-day"]
+[UTCDate "2015.11.31"]
+[Date "2015.11.15"]
+[EventDate "2015.11.10"]
+[Result "*"]
+
+*
+
+[Event "B Clamp Date 30-day"]
+[Date "1963.11.31"]
+[Result "*"]
+
+*
+
+[Event "C Clamp EventDate Non-leap February"]
+[Date "????.??.??"]
+[EventDate "1997.02.29"]
+[Result "*"]
+
+*
+
+[Event "D Clamp UTCDate Leap February"]
+[UTCDate "2000.02.30"]
+[Result "*"]
+
+*

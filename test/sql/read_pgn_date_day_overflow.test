@@ -1,0 +1,23 @@
+# description: Test out-of-range day clamping for UTCDate conversion
+# group: [read_pgn]
+
+require chess
+
+query TT
+SELECT
+  Event,
+  strftime(UTCDate, '%Y-%m-%d')
+FROM read_pgn('test/pgn_files/date_day_overflow.pgn')
+ORDER BY Event;
+----
+A Clamp UTCDate 30-day	2015-11-30
+B Clamp Date 30-day	1963-11-30
+C Clamp EventDate Non-leap February	1997-02-28
+D Clamp UTCDate Leap February	2000-02-29
+
+query I
+SELECT COUNT(*)
+FROM read_pgn('test/pgn_files/date_day_overflow.pgn')
+WHERE parse_error IS NOT NULL;
+----
+0

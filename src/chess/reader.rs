@@ -642,6 +642,100 @@ mod tests {
     }
 
     #[test]
+    fn test_pgn_visitor_date_clamps_out_of_range_day_for_30_day_month() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Clamp November Day Overflow"]
+[Date "2015.11.31"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(2015, 11, 30));
+        assert!(game.parse_error.is_none());
+    }
+
+    #[test]
+    fn test_pgn_visitor_date_clamps_out_of_range_day_for_non_leap_february() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Clamp Non-Leap February Day Overflow"]
+[Date "1997.02.29"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(1997, 2, 28));
+        assert!(game.parse_error.is_none());
+    }
+
+    #[test]
+    fn test_pgn_visitor_date_clamps_out_of_range_day_for_leap_february() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Clamp Leap February Day Overflow"]
+[Date "2000.02.30"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(2000, 2, 29));
+        assert!(game.parse_error.is_none());
+    }
+
+    #[test]
+    fn test_pgn_visitor_date_clamp_preserves_header_precedence() {
+        use crate::chess::visitor::GameVisitor;
+        use pgn_reader::Reader;
+
+        let pgn_content = r#"
+[Event "Clamp Precedence"]
+[UTCDate "2015.11.31"]
+[Date "2015.11.15"]
+[EventDate "2015.11.10"]
+[Result "*"]
+
+*
+"#;
+
+        let mut visitor = GameVisitor::new();
+        let mut reader = Reader::new(pgn_content.as_bytes());
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.take().unwrap();
+        let utc_date = game.utc_date.unwrap();
+        assert_eq!(utc_date.days, days_from_civil(2015, 11, 30));
+        assert!(game.parse_error.is_none());
+    }
+
+    #[test]
     fn test_pgn_visitor_date_invalid_records_chrono_error() {
         use crate::chess::visitor::GameVisitor;
         use pgn_reader::Reader;
