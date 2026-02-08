@@ -1,3 +1,9 @@
+## [0.3.1] - 2026-02-08
+
+### 🐛 Bug Fixes
+
+- Clamp out of range day
+
 ## [0.3.0] - 2026-02-07
 
 ### 🚀 Features
