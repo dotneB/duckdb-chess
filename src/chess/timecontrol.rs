@@ -108,6 +108,50 @@ impl VScalar for ChessTimecontrolJsonScalar {
     }
 }
 
+pub struct ChessTimecontrolCategoryScalar;
+
+impl VScalar for ChessTimecontrolCategoryScalar {
+    type State = ();
+
+    unsafe fn invoke(
+        _state: &Self::State,
+        input: &mut DataChunkHandle,
+        output: &mut dyn WritableVector,
+    ) -> Result<(), Box<dyn Error>> {
+        let len = input.len();
+        let input_vec = input.flat_vector(0);
+        let mut output_vec = output.flat_vector();
+
+        let input_slice = input_vec.as_slice::<duckdb_string_t>();
+
+        for (i, s) in input_slice.iter().take(len).enumerate() {
+            if input_vec.row_is_null(i as u64) {
+                output_vec.set_null(i);
+                continue;
+            }
+
+            let val = unsafe { decode_duckdb_string(*s) };
+            match categorize_timecontrol(&val) {
+                Some(category) => {
+                    output_vec.insert(i, CString::new(category)?);
+                }
+                None => {
+                    output_vec.set_null(i);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn signatures() -> Vec<ScalarFunctionSignature> {
+        vec![ScalarFunctionSignature::exact(
+            vec![LogicalTypeHandle::from(LogicalTypeId::Varchar)],
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        )]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Period {
     pub moves: Option<u32>,
@@ -777,6 +821,29 @@ pub fn normalize_timecontrol(raw: &str) -> Option<String> {
     }
 }
 
+pub fn category_from_parsed_timecontrol(parsed: &ParsedTimeControl) -> Option<&'static str> {
+    if parsed.mode != Mode::Normal {
+        return None;
+    }
+
+    let period = parsed.periods.first()?;
+    let increment = period.increment_seconds.unwrap_or(0) as u64;
+    let estimated_seconds = period.base_seconds as u64 + 40 * increment;
+
+    match estimated_seconds {
+        0..=29 => Some("ultra-bullet"),
+        30..=179 => Some("bullet"),
+        180..=479 => Some("blitz"),
+        480..=1499 => Some("rapid"),
+        _ => Some("classical"),
+    }
+}
+
+pub fn categorize_timecontrol(raw: &str) -> Option<&'static str> {
+    let parsed = parse_timecontrol(raw).ok()?;
+    category_from_parsed_timecontrol(&parsed)
+}
+
 pub fn timecontrol_to_json(parsed: &ParsedTimeControl) -> String {
     let mode_str = match parsed.mode {
         Mode::Unknown => "unknown",
@@ -1061,6 +1128,51 @@ mod tests {
         assert_eq!(normalize_timecontrol("180+2"), Some("180+2".to_string()));
         assert_eq!(normalize_timecontrol("?"), Some("?".to_string()));
         assert_eq!(normalize_timecontrol("invalid"), None);
+    }
+
+    #[test]
+    fn test_category_threshold_boundaries() {
+        assert_eq!(categorize_timecontrol("29''"), Some("ultra-bullet"));
+        assert_eq!(categorize_timecontrol("30''"), Some("bullet"));
+        assert_eq!(categorize_timecontrol("179''"), Some("bullet"));
+        assert_eq!(categorize_timecontrol("180+0"), Some("blitz"));
+        assert_eq!(categorize_timecontrol("479+0"), Some("blitz"));
+        assert_eq!(categorize_timecontrol("480+0"), Some("rapid"));
+        assert_eq!(categorize_timecontrol("1499+0"), Some("rapid"));
+        assert_eq!(categorize_timecontrol("1500+0"), Some("classical"));
+    }
+
+    #[test]
+    fn test_category_increment_driven_case() {
+        assert_eq!(categorize_timecontrol("2+12"), Some("rapid"));
+    }
+
+    #[test]
+    fn test_category_respects_small_base_minute_inference() {
+        assert_eq!(categorize_timecontrol("29+0"), Some("classical"));
+        assert_eq!(categorize_timecontrol("29''"), Some("ultra-bullet"));
+    }
+
+    #[test]
+    fn test_category_returns_none_for_non_normal_modes_and_invalid() {
+        assert_eq!(categorize_timecontrol("?"), None);
+        assert_eq!(categorize_timecontrol("-"), None);
+        assert_eq!(categorize_timecontrol("*60"), None);
+        assert_eq!(categorize_timecontrol("klassisch"), None);
+    }
+
+    #[test]
+    fn test_category_returns_none_when_normal_mode_has_no_periods() {
+        let parsed = ParsedTimeControl {
+            raw: "n/a".to_string(),
+            normalized: Some("n/a".to_string()),
+            periods: Vec::new(),
+            mode: Mode::Normal,
+            warnings: Vec::new(),
+            inferred: false,
+        };
+
+        assert_eq!(category_from_parsed_timecontrol(&parsed), None);
     }
 
     #[test]

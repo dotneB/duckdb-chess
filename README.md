@@ -152,6 +152,15 @@ SELECT chess_timecontrol_normalize('15 + 10');
 
 SELECT chess_timecontrol_json('15 + 10');
 -- {"raw":"15 + 10","normalized":"900+10","mode":"normal","periods":[{"base":900,"increment":10}],"warnings":["normalized_operator_whitespace","interpreted_small_base_as_minutes"],"inferred":true}
+
+SELECT chess_timecontrol_category('2+12');
+-- rapid
+
+SELECT chess_timecontrol_category('29''''');
+-- ultra-bullet
+
+SELECT chess_timecontrol_category('29+0');
+-- classical (small-base shorthand is interpreted as minutes)
 ```
 
 
@@ -313,6 +322,7 @@ Returned columns:
 | `chess_moves_subset(short_movetext, long_movetext)` | BOOLEAN | True if `short` mainline is a prefix of `long` mainline                                                          |
 | `chess_timecontrol_normalize(timecontrol)`          | VARCHAR | Normalizes PGN TimeControl to canonical seconds; NULL on failure                                                 |
 | `chess_timecontrol_json(timecontrol)`               | VARCHAR | JSON with raw, normalized, mode, periods, warnings, inferred                                                     |
+| `chess_timecontrol_category(timecontrol)`           | VARCHAR | Lichess-style category from estimated seconds (`base + 40*increment`); NULL for unsupported/unparseable inputs  |
 
 ## License
 

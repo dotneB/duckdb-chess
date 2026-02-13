@@ -15,6 +15,11 @@ SELECT chess_timecontrol_json(NULL);
 ----
 NULL
 
+query I
+SELECT chess_timecontrol_category(NULL);
+----
+NULL
+
 # Test strict parsing - already spec-shaped values
 query I
 SELECT chess_timecontrol_normalize('180+2');
@@ -212,6 +217,67 @@ query I
 SELECT chess_timecontrol_json('g60+30') LIKE '%"interpreted_g_prefix_as_minutes"%';
 ----
 true
+
+# Test category output
+query I
+SELECT chess_timecontrol_category('29''''');
+----
+ultra-bullet
+
+query I
+SELECT chess_timecontrol_category('1+0');
+----
+bullet
+
+query I
+SELECT chess_timecontrol_category('3+0');
+----
+blitz
+
+query I
+SELECT chess_timecontrol_category('2+12');
+----
+rapid
+
+query I
+SELECT chess_timecontrol_category('25+0');
+----
+classical
+
+query I
+SELECT chess_timecontrol_category('29+0');
+----
+classical
+
+query I
+SELECT chess_timecontrol_category('3+2');
+----
+blitz
+
+query I
+SELECT chess_timecontrol_category('180+2');
+----
+blitz
+
+query I
+SELECT chess_timecontrol_category('?');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_category('-');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_category('*60');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_category('klassisch');
+----
+NULL
 
 # Test JSON includes warnings
 query I
