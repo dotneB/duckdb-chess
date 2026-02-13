@@ -2,6 +2,7 @@ mod duckdb_string;
 mod filter;
 mod moves;
 mod reader;
+mod timecontrol;
 mod types;
 mod visitor;
 
@@ -14,6 +15,7 @@ use moves::{
 };
 use reader::ReadPgnVTab;
 use std::error::Error;
+use timecontrol::{ChessTimecontrolJsonScalar, ChessTimecontrolNormalizeScalar};
 
 #[duckdb_extension(name = "chess", api_version = "v1.0.0")]
 pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>> {
@@ -29,6 +31,8 @@ pub unsafe fn extension_entrypoint(con: Connection) -> Result<(), Box<dyn Error>
     con.register_scalar_function::<ChessMovesSubsetScalar>("chess_moves_subset")?;
     con.register_scalar_function::<ChessFenEpdScalar>("chess_fen_epd")?;
     con.register_scalar_function::<ChessPlyCountScalar>("chess_ply_count_impl")?;
+    con.register_scalar_function::<ChessTimecontrolNormalizeScalar>("chess_timecontrol_normalize")?;
+    con.register_scalar_function::<ChessTimecontrolJsonScalar>("chess_timecontrol_json")?;
 
     con.execute_batch(
         "CREATE OR REPLACE MACRO chess_moves_json(movetext, max_ply := NULL) AS

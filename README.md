@@ -137,9 +137,23 @@ Notes:
 SELECT chess_moves_normalize('1. e4! {comment} e5?? $1 2. Nf3') AS clean;
 -- clean = '1. e4 e5 2. Nf3'
 
-SELECT chess_moves_hash('e4 e5 Nf3 Nc6') AS h;          -- UBIGINT
+SELECT chess_moves_hash('1. e4 e5 2. Nf3 Nc6') AS h;          -- UBIGINT
 SELECT chess_ply_count('1. e4 e5 2. Nf3') AS ply_count;  -- BIGINT
 ```
+
+### Time control tag normalization
+
+```sql
+SELECT chess_timecontrol_normalize('90min./40 + 30min. + 30s./move');
+-- 40/5400+30:1800+30
+
+SELECT chess_timecontrol_normalize('15 + 10');
+-- 900+10 -- Infers 15 is probably minutes and not seconds. To see if it was inferred, you can use chess_timecontrol_json
+
+SELECT chess_timecontrol_json('15 + 10');
+-- {"raw":"15 + 10","normalized":"900+10","mode":"normal","periods":[{"base":900,"increment":10}],"warnings":["normalized_operator_whitespace","interpreted_small_base_as_minutes"],"inferred":true}
+```
+
 
 ### Subset Filtering Patterns
 
@@ -297,7 +311,8 @@ Returned columns:
 | `chess_moves_json(movetext, max_ply := NULL)`       | VARCHAR | JSON string of `{ply, move, fen, epd}` (NULL-safe macro)                                                         |
 | `chess_fen_epd(fen)`                                | VARCHAR | Converts FEN to EPD join key (board/side/castling/ep)                                                            |
 | `chess_moves_subset(short_movetext, long_movetext)` | BOOLEAN | True if `short` mainline is a prefix of `long` mainline                                                          |
-
+| `chess_timecontrol_normalize(timecontrol)`          | VARCHAR | Normalizes PGN TimeControl to canonical seconds; NULL on failure                                                 |
+| `chess_timecontrol_json(timecontrol)`               | VARCHAR | JSON with raw, normalized, mode, periods, warnings, inferred                                                     |
 
 ## License
 

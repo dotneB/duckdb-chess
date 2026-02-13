@@ -14,13 +14,13 @@ test: debug
   echo "Running cargo tests..."
   cargo test
   echo "Running duckdb-slt integration tests..."
-  duckdb-slt.exe -e ./target/debug/chess.duckdb_extension -u -w "$PWD" "$PWD/test/sql/*.test"
+  duckdb-slt.exe -e ./target/debug/chess.duckdb_extension -u -w . test/sql/*.test
 
 test-release: release
   echo "Running cargo tests..."
   cargo test
   echo "Running duckdb-slt integration tests..."
-  duckdb-slt.exe -e ./target/release/chess.duckdb_extension -u -w "$PWD" "$PWD/test/sql/*.test"
+  duckdb-slt.exe -e ./target/release/chess.duckdb_extension -u -w . test/sql/*.test
 
 check:
   cargo fmt --check

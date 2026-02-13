@@ -1,0 +1,220 @@
+# name: test/sql/chess_timecontrol.test
+# description: Test chess_timecontrol_normalize and chess_timecontrol_json scalar functions
+# group: [chess_timecontrol]
+
+require chess
+
+# Test NULL input returns NULL
+query I
+SELECT chess_timecontrol_normalize(NULL);
+----
+NULL
+
+query I
+SELECT chess_timecontrol_json(NULL);
+----
+NULL
+
+# Test strict parsing - already spec-shaped values
+query I
+SELECT chess_timecontrol_normalize('180+2');
+----
+180+2
+
+query I
+SELECT chess_timecontrol_normalize('?');
+----
+?
+
+query I
+SELECT chess_timecontrol_normalize('-');
+----
+-
+
+query I
+SELECT chess_timecontrol_normalize('*60');
+----
+*60
+
+query I
+SELECT chess_timecontrol_normalize('40/5400+30');
+----
+40/5400+30
+
+query I
+SELECT chess_timecontrol_normalize('40/5400+30:1800+30');
+----
+40/5400+30:1800+30
+
+# Test minute shorthand inference
+query I
+SELECT chess_timecontrol_normalize('3+2');
+----
+180+2
+
+query I
+SELECT chess_timecontrol_normalize('15+10');
+----
+900+10
+
+query I
+SELECT chess_timecontrol_normalize('75+30');
+----
+4500+30
+
+query I
+SELECT chess_timecontrol_normalize('90+30');
+----
+5400+30
+
+query I
+SELECT chess_timecontrol_normalize('g60+30');
+----
+3600+30
+
+query I
+SELECT chess_timecontrol_normalize('G/90; +30inc');
+----
+5400+30
+
+query I
+SELECT chess_timecontrol_normalize('G90 + 30 seconds/move');
+----
+5400+30
+
+query I
+SELECT chess_timecontrol_normalize('Game/15 + 10 seconds per move');
+----
+900+10
+
+query I
+SELECT chess_timecontrol_normalize('G: 15 min + 10 seconds added per move');
+----
+900+10
+
+# Test bare minute shorthand
+query I
+SELECT chess_timecontrol_normalize('25');
+----
+1500
+
+# Test punctuation normalization
+query I
+SELECT chess_timecontrol_normalize('75 | 30');
+----
+4500+30
+
+query I
+SELECT chess_timecontrol_normalize('"180+2"');
+----
+180+2
+
+query I
+SELECT chess_timecontrol_normalize('15 + 10');
+----
+900+10
+
+# Test apostrophe notation
+query I
+SELECT chess_timecontrol_normalize('10''+5''''');
+----
+600+5
+
+# Test large values not reinterpreted
+query I
+SELECT chess_timecontrol_normalize('900+10');
+----
+900+10
+
+# Test failure cases
+query I
+SELECT chess_timecontrol_normalize('klassisch');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_normalize('x/600+5');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_normalize('30 sec per move');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_normalize('game in 3 minutes + 2 seconds per move');
+----
+180+2
+
+query I
+SELECT chess_timecontrol_normalize('90 minutes for 40 moves + 30 minutes for the rest + 30 seconds per move from move one');
+----
+40/5400+30:1800+30
+
+query I
+SELECT chess_timecontrol_normalize('90min./40 + 30min. + 30s./move');
+----
+40/5400+30:1800+30
+
+query I
+SELECT chess_timecontrol_normalize('90+30''');
+----
+5400+30
+
+# Test JSON output
+query I
+SELECT chess_timecontrol_json('3+2') LIKE '%"normalized":"180+2"%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('3+2') LIKE '%"inferred":true%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('3+2') LIKE '%"mode":"normal"%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('180+2') LIKE '%"inferred":false%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('?') LIKE '%"mode":"unknown"%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('-') LIKE '%"mode":"unlimited"%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('*60') LIKE '%"mode":"sandclock"%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('15 + 10') LIKE '%"raw":"15 + 10"%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('klassisch') LIKE '%"normalized":null%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('g60+30') LIKE '%"interpreted_g_prefix_as_minutes"%';
+----
+true
+
+# Test JSON includes warnings
+query I
+SELECT chess_timecontrol_json('3+2') LIKE '%warnings%';
+----
+true

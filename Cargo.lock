@@ -373,6 +373,8 @@ dependencies = [
  "glob",
  "libduckdb-sys",
  "pgn-reader",
+ "regex",
+ "serde_json",
  "shakmaty",
 ]
 
