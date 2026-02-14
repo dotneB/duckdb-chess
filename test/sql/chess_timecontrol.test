@@ -167,6 +167,86 @@ SELECT chess_timecontrol_normalize('90+30''');
 ----
 5400+30
 
+query I
+SELECT chess_timecontrol_normalize('3'' + 2''''/mv from move 1');
+----
+180+2
+
+query I
+SELECT chess_timecontrol_normalize('15'' + 10''''/mv from move 1');
+----
+900+10
+
+query I
+SELECT chess_timecontrol_normalize('3 mins + 2 seconds increment');
+----
+180+2
+
+query I
+SELECT chess_timecontrol_normalize('90 mins + 30 Secs');
+----
+5400+30
+
+query I
+SELECT chess_timecontrol_normalize('Standard: 90mins + 30sec increment');
+----
+5400+30
+
+query I
+SELECT chess_timecontrol_normalize('90+30 sec per move');
+----
+5400+30
+
+query I
+SELECT chess_timecontrol_normalize('90 + 30 OFICIAL');
+----
+5400+30
+
+query I
+SELECT chess_timecontrol_normalize('90 + 30 round2');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_normalize('1:30.00 + 30 seconds increment from move 1');
+----
+5400+30
+
+query I
+SELECT chess_timecontrol_normalize('90''/40+30''/G+30''''');
+----
+40/5400+30:1800+30
+
+query I
+SELECT chess_timecontrol_normalize('90''/40m + 30''/end + 30''/move');
+----
+40/5400+30:1800+30
+
+query I
+SELECT chess_timecontrol_normalize('90''/40m + 30''/end & 30/m');
+----
+40/5400+30:1800+30
+
+query I
+SELECT chess_timecontrol_normalize('90''/40 moves + 30'' + 30'''' bonus increment');
+----
+40/5400+30:1800+30
+
+query I
+SELECT chess_timecontrol_normalize('90mins+30second additional +30mins after move 40');
+----
+40/5400+30:1800+30
+
+query I
+SELECT chess_timecontrol_normalize('90 + 30 + 30s per move');
+----
+40/5400+30:1800+30
+
+query I
+SELECT chess_timecontrol_normalize('90+30/30+30');
+----
+5400+30:1800+30
+
 # Test JSON output
 query I
 SELECT chess_timecontrol_json('3+2') LIKE '%"normalized":"180+2"%';
@@ -215,6 +295,21 @@ true
 
 query I
 SELECT chess_timecontrol_json('g60+30') LIKE '%"interpreted_g_prefix_as_minutes"%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('90 + 30 OFICIAL') LIKE '%"ignored_trailing_qualifier_suffix"%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('90+30/30+30') LIKE '%"interpreted_two_stage_slash_shorthand"%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('3'' + 2''''/mv from move 1') LIKE '%"interpreted_apostrophe_per_move_suffix"%';
 ----
 true
 

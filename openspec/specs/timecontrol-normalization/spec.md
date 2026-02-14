@@ -70,6 +70,62 @@ Any such interpretation SHALL be marked as inferred in the structured parse outp
 - **WHEN** the input is `10'+5''`
 - **THEN** the normalized output equals `600+5`
 
+#### Scenario: Normalize apostrophe increment with per-move suffix
+- **WHEN** the input is `3' + 2''/mv from move 1`
+- **THEN** the normalized output equals `180+2`
+
+#### Scenario: Normalize apostrophe increment with per-move suffix for larger base
+- **WHEN** the input is `15' + 10''/mv from move 1`
+- **THEN** the normalized output equals `900+10`
+
+#### Scenario: Normalize compact minute-second text abbreviation
+- **WHEN** the input is `3 mins + 2 seconds increment`
+- **THEN** the normalized output equals `180+2`
+
+#### Scenario: Normalize compact classical minute-second text abbreviation
+- **WHEN** the input is `90 mins + 30 Secs`
+- **THEN** the normalized output equals `5400+30`
+
+#### Scenario: Normalize compact minute-second text with prefix labels
+- **WHEN** the input is `Standard: 90mins + 30sec increment`
+- **THEN** the normalized output equals `5400+30`
+
+#### Scenario: Normalize compact classical plus trailing qualifier text
+- **WHEN** the input is `90 + 30 OFICIAL`
+- **THEN** the normalized output equals `5400+30`
+
+#### Scenario: Do not strip suffixes that include structural numeric tokens
+- **WHEN** the input is `90 + 30 round2`
+- **THEN** the normalized output is NULL
+
+#### Scenario: Normalize clock-style base with increment
+- **WHEN** the input is `1:30.00 + 30 seconds increment from move 1`
+- **THEN** the normalized output equals `5400+30`
+
+#### Scenario: Normalize compact FIDE two-stage apostrophe shorthand with game token
+- **WHEN** the input is `90'/40+30'/G+30''`
+- **THEN** the normalized output equals `40/5400+30:1800+30`
+
+#### Scenario: Normalize compact FIDE two-stage apostrophe shorthand with end token
+- **WHEN** the input is `90'/40m + 30'/end + 30'/move`
+- **THEN** the normalized output equals `40/5400+30:1800+30`
+
+#### Scenario: Normalize compact FIDE two-stage bonus wording
+- **WHEN** the input is `90'/40 moves + 30' + 30'' bonus increment`
+- **THEN** the normalized output equals `40/5400+30:1800+30`
+
+#### Scenario: Normalize compact FIDE two-stage additional wording
+- **WHEN** the input is `90mins+30second additional +30mins after move 40`
+- **THEN** the normalized output equals `40/5400+30:1800+30`
+
+#### Scenario: Normalize compact staged triple-plus shorthand
+- **WHEN** the input is `90 + 30 + 30s per move`
+- **THEN** the normalized output equals `40/5400+30:1800+30`
+
+#### Scenario: Normalize staged shorthand missing move qualifier without inventing moves
+- **WHEN** the input is `90+30/30+30`
+- **THEN** the normalized output equals `5400+30:1800+30`
+
 ### Requirement: Structured TimeControl parsing output
 The system SHALL provide a function that returns a structured representation of a `TimeControl` parse, including inference warnings.
 

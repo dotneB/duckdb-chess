@@ -226,6 +226,23 @@ pub fn parse_timecontrol(raw: &str) -> Result<ParsedTimeControl, TimeControlErro
         return with_original_raw(raw, result);
     }
 
+    if let Some(core) = strip_trailing_qualifier_suffix(&preprocessed) {
+        let mut fallback_warnings = warnings.clone();
+        fallback_warnings.push("ignored_trailing_qualifier_suffix".to_string());
+
+        if let Some(result) = try_strict_parse(&core, &mut fallback_warnings) {
+            return with_original_raw(raw, result);
+        }
+
+        if let Some(result) = try_inference(&core, &mut fallback_warnings) {
+            return with_original_raw(raw, result);
+        }
+
+        if let Some(result) = try_free_text_templates(&core, &mut fallback_warnings) {
+            return with_original_raw(raw, result);
+        }
+    }
+
     Ok(ParsedTimeControl {
         raw: raw.to_string(),
         normalized: None,
@@ -234,6 +251,32 @@ pub fn parse_timecontrol(raw: &str) -> Result<ParsedTimeControl, TimeControlErro
         warnings,
         inferred: false,
     })
+}
+
+fn strip_trailing_qualifier_suffix(input: &str) -> Option<String> {
+    let qualifier_re = regex::Regex::new(r"^(.*?)\s+([\p{L}]+)$").ok()?;
+    let caps = qualifier_re.captures(input)?;
+    let core = caps.get(1)?.as_str().trim();
+    let suffix = caps.get(2)?.as_str().trim();
+
+    if core.is_empty() || suffix.is_empty() {
+        return None;
+    }
+
+    if suffix.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+
+    if suffix.chars().any(|c| {
+        matches!(
+            c,
+            '+' | '/' | ':' | '*' | '-' | '?' | '\'' | '"' | '&' | '|'
+        )
+    }) {
+        return None;
+    }
+
+    Some(core.to_string())
 }
 
 fn preprocess(input: &str) -> (String, Vec<String>) {
@@ -462,6 +505,34 @@ fn try_inference(
         return Some(result);
     }
 
+    if let Some(result) = try_apostrophe_per_move_shorthand(input, warnings) {
+        return Some(result);
+    }
+
+    if let Some(result) = try_compact_fide_apostrophe_shorthand(input, warnings) {
+        return Some(result);
+    }
+
+    if let Some(result) = try_fide_additional_wording(input, warnings) {
+        return Some(result);
+    }
+
+    if let Some(result) = try_compact_fide_triple_plus(input, warnings) {
+        return Some(result);
+    }
+
+    if let Some(result) = try_two_stage_slash_shorthand(input, warnings) {
+        return Some(result);
+    }
+
+    if let Some(result) = try_compact_minute_second_increment(input, warnings) {
+        return Some(result);
+    }
+
+    if let Some(result) = try_clock_style_increment(input, warnings) {
+        return Some(result);
+    }
+
     if let Some(result) = try_apostrophe_notation(input, warnings) {
         return Some(result);
     }
@@ -597,6 +668,262 @@ fn try_g_prefix_shorthand(
     }
 
     None
+}
+
+fn inferred_parsed(input: &str, warnings: &[String], periods: Vec<Period>) -> ParsedTimeControl {
+    let normalized = periods
+        .iter()
+        .map(format_period)
+        .collect::<Vec<_>>()
+        .join(":");
+
+    ParsedTimeControl {
+        raw: input.to_string(),
+        normalized: Some(normalized),
+        periods,
+        mode: Mode::Normal,
+        warnings: warnings.to_vec(),
+        inferred: true,
+    }
+}
+
+#[allow(clippy::ptr_arg)]
+fn try_apostrophe_per_move_shorthand(
+    input: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Result<ParsedTimeControl, TimeControlError>> {
+    let re =
+        regex::Regex::new(r"(?i)^\s*(\d+)\s*'\s*\+\s*(\d+)\s*''\s*/\s*(?:m|mv|move)\b.*$").ok()?;
+    let caps = re.captures(input)?;
+    let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let inc_secs = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
+
+    warnings.push("interpreted_apostrophe_per_move_suffix".to_string());
+    Some(Ok(inferred_parsed(
+        input,
+        warnings,
+        vec![Period {
+            moves: None,
+            base_seconds: base_mins * 60,
+            increment_seconds: Some(inc_secs),
+        }],
+    )))
+}
+
+#[allow(clippy::ptr_arg)]
+fn try_compact_minute_second_increment(
+    input: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Result<ParsedTimeControl, TimeControlError>> {
+    let re = regex::Regex::new(
+        r"(?i)^\s*(?:[\p{L}\s]+:\s*)?(\d+)\s*(?:minutes?|mins?|mns?|m\.?)?\s*\+\s*(\d+)\s*(?:seconds?|secs?|sec|s|ss|secss)\b(?:\s*(?:increment|inc|incr|added|additional))?(?:\s*(?:(?:from\s*move\s*\w+)|(?:per\s*move)|/move|/mv|/m))?\s*$",
+    )
+    .ok()?;
+    let caps = re.captures(input)?;
+    let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let inc_secs = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
+
+    warnings.push("interpreted_compact_minute_second_increment".to_string());
+    Some(Ok(inferred_parsed(
+        input,
+        warnings,
+        vec![Period {
+            moves: None,
+            base_seconds: base_mins * 60,
+            increment_seconds: Some(inc_secs),
+        }],
+    )))
+}
+
+#[allow(clippy::ptr_arg)]
+fn try_clock_style_increment(
+    input: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Result<ParsedTimeControl, TimeControlError>> {
+    let re = regex::Regex::new(
+        r"(?i)^\s*(\d+)\s*:\s*([0-5]?\d)(?:\.\d+)?\s*\+\s*(\d+)\s*(?:seconds?|secs?|sec|s)\b(?:\s*(?:increment|inc|incr|added|additional))?(?:\s*(?:(?:from\s*move\s*\w+)|(?:per\s*move)|/move|/mv|/m))?\s*$",
+    )
+    .ok()?;
+    let caps = re.captures(input)?;
+
+    let hours = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let minutes = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let inc_secs = caps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())?;
+
+    let base_seconds = hours * 3600 + minutes * 60;
+    warnings.push("interpreted_clock_style_base".to_string());
+    Some(Ok(inferred_parsed(
+        input,
+        warnings,
+        vec![Period {
+            moves: None,
+            base_seconds,
+            increment_seconds: Some(inc_secs),
+        }],
+    )))
+}
+
+fn parse_compact_fide_caps(caps: &regex::Captures<'_>) -> Option<(u32, u32, u32, u32)> {
+    let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let moves = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let rest_mins = caps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let inc_secs = caps.get(4).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    Some((base_mins, moves, rest_mins, inc_secs))
+}
+
+#[allow(clippy::ptr_arg)]
+fn try_compact_fide_apostrophe_shorthand(
+    input: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Result<ParsedTimeControl, TimeControlError>> {
+    let with_move_re = regex::Regex::new(
+        r"(?i)^\s*(\d+)\s*'\s*/\s*(\d+)\s*(?:m|moves?)?\s*(?:\+|&)\s*(\d+)\s*'\s*/\s*(?:g|end)\s*(?:\+|&)\s*(\d+)\s*(?:''?)?\s*/\s*(?:m|mv|move)\b.*$",
+    )
+    .ok()?;
+    let g_compact_re = regex::Regex::new(
+        r"(?i)^\s*(\d+)\s*'\s*/\s*(\d+)\s*(?:m|moves?)?\s*(?:\+|&)\s*(\d+)\s*'\s*/\s*(?:g|end)\s*(?:\+|&)\s*(\d+)\s*''\s*$",
+    )
+    .ok()?;
+    let bonus_re = regex::Regex::new(
+        r"(?i)^\s*(\d+)\s*'\s*/\s*(\d+)\s*(?:m|moves?)\s*(?:\+|&)\s*(\d+)\s*'\s*(?:\+|&)\s*(\d+)\s*''\s*bonus(?:\s*increment)?\s*$",
+    )
+    .ok()?;
+
+    let (caps, warning_code) = if let Some(c) = with_move_re.captures(input) {
+        (c, "interpreted_compact_fide_apostrophe")
+    } else if let Some(c) = g_compact_re.captures(input) {
+        (c, "interpreted_compact_fide_apostrophe")
+    } else if let Some(c) = bonus_re.captures(input) {
+        (c, "interpreted_compact_fide_bonus_wording")
+    } else {
+        return None;
+    };
+
+    let (base_mins, moves, rest_mins, inc_secs) = parse_compact_fide_caps(&caps)?;
+    warnings.push(warning_code.to_string());
+
+    Some(Ok(inferred_parsed(
+        input,
+        warnings,
+        vec![
+            Period {
+                moves: Some(moves),
+                base_seconds: base_mins * 60,
+                increment_seconds: Some(inc_secs),
+            },
+            Period {
+                moves: None,
+                base_seconds: rest_mins * 60,
+                increment_seconds: Some(inc_secs),
+            },
+        ],
+    )))
+}
+
+#[allow(clippy::ptr_arg)]
+fn try_fide_additional_wording(
+    input: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Result<ParsedTimeControl, TimeControlError>> {
+    let re = regex::Regex::new(
+        r"(?i)^\s*(\d+)\s*(?:minutes?|mins?|m)\s*\+\s*(\d+)\s*(?:seconds?|secs?|sec|s)\s*additional\s*\+\s*(\d+)\s*(?:minutes?|mins?|m)\s*after\s*move\s*40\s*$",
+    )
+    .ok()?;
+    let caps = re.captures(input)?;
+
+    let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let inc_secs = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let rest_mins = caps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())?;
+
+    warnings.push("interpreted_fide_additional_wording".to_string());
+    Some(Ok(inferred_parsed(
+        input,
+        warnings,
+        vec![
+            Period {
+                moves: Some(40),
+                base_seconds: base_mins * 60,
+                increment_seconds: Some(inc_secs),
+            },
+            Period {
+                moves: None,
+                base_seconds: rest_mins * 60,
+                increment_seconds: Some(inc_secs),
+            },
+        ],
+    )))
+}
+
+#[allow(clippy::ptr_arg)]
+fn try_compact_fide_triple_plus(
+    input: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Result<ParsedTimeControl, TimeControlError>> {
+    let per_move_re = regex::Regex::new(
+        r"(?i)^\s*(\d+)\s*\+\s*(\d+)\s*\+\s*(\d+)\s*(?:seconds?|secs?|sec|s)\s*(?:per\s*move|/move|/mv|/m)\s*$",
+    )
+    .ok()?;
+    let after_move_re =
+        regex::Regex::new(r"(?i)^\s*(\d+)\s*\+\s*(\d+)\s*\+\s*(\d+)\s*after\s*40\s*moves?\s*$")
+            .ok()?;
+
+    let caps = per_move_re
+        .captures(input)
+        .or_else(|| after_move_re.captures(input))?;
+
+    let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let rest_mins = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let inc_secs = caps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())?;
+
+    warnings.push("interpreted_compact_fide_triple_plus".to_string());
+    Some(Ok(inferred_parsed(
+        input,
+        warnings,
+        vec![
+            Period {
+                moves: Some(40),
+                base_seconds: base_mins * 60,
+                increment_seconds: Some(inc_secs),
+            },
+            Period {
+                moves: None,
+                base_seconds: rest_mins * 60,
+                increment_seconds: Some(inc_secs),
+            },
+        ],
+    )))
+}
+
+#[allow(clippy::ptr_arg)]
+fn try_two_stage_slash_shorthand(
+    input: &str,
+    warnings: &mut Vec<String>,
+) -> Option<Result<ParsedTimeControl, TimeControlError>> {
+    let re = regex::Regex::new(r"^\s*(\d+)\s*\+\s*(\d+)\s*/\s*(\d+)\s*\+\s*(\d+)\s*$").ok()?;
+    let caps = re.captures(input)?;
+
+    let first_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let first_inc = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let second_mins = caps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())?;
+    let second_inc = caps.get(4).and_then(|m| m.as_str().parse::<u32>().ok())?;
+
+    warnings.push("interpreted_two_stage_slash_shorthand".to_string());
+    Some(Ok(inferred_parsed(
+        input,
+        warnings,
+        vec![
+            Period {
+                moves: None,
+                base_seconds: first_mins * 60,
+                increment_seconds: Some(first_inc),
+            },
+            Period {
+                moves: None,
+                base_seconds: second_mins * 60,
+                increment_seconds: Some(second_inc),
+            },
+        ],
+    )))
 }
 
 #[allow(clippy::ptr_arg)]
@@ -1031,6 +1358,126 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|w| w == "stripped_trailing_apostrophe")
+        );
+    }
+
+    #[test]
+    fn test_apostrophe_per_move_suffix() {
+        let result = parse_timecontrol("3' + 2''/mv from move 1").unwrap();
+        assert_eq!(result.normalized, Some("180+2".to_string()));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w == "interpreted_apostrophe_per_move_suffix")
+        );
+    }
+
+    #[test]
+    fn test_apostrophe_per_move_suffix_larger_base() {
+        let result = parse_timecontrol("15' + 10''/mv from move 1").unwrap();
+        assert_eq!(result.normalized, Some("900+10".to_string()));
+    }
+
+    #[test]
+    fn test_compact_minute_second_text_abbreviation() {
+        let result = parse_timecontrol("3 mins + 2 seconds increment").unwrap();
+        assert_eq!(result.normalized, Some("180+2".to_string()));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w == "interpreted_compact_minute_second_increment")
+        );
+    }
+
+    #[test]
+    fn test_compact_classical_minute_second_text_abbreviation() {
+        let result = parse_timecontrol("90 mins + 30 Secs").unwrap();
+        assert_eq!(result.normalized, Some("5400+30".to_string()));
+    }
+
+    #[test]
+    fn test_compact_minute_second_text_with_prefix_label() {
+        let result = parse_timecontrol("Standard: 90mins + 30sec increment").unwrap();
+        assert_eq!(result.normalized, Some("5400+30".to_string()));
+    }
+
+    #[test]
+    fn test_compact_minute_second_without_minute_unit() {
+        let result = parse_timecontrol("90+30 sec per move").unwrap();
+        assert_eq!(result.normalized, Some("5400+30".to_string()));
+    }
+
+    #[test]
+    fn test_compact_classical_with_trailing_qualifier_suffix() {
+        let result = parse_timecontrol("90 + 30 OFICIAL").unwrap();
+        assert_eq!(result.normalized, Some("5400+30".to_string()));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w == "ignored_trailing_qualifier_suffix")
+        );
+    }
+
+    #[test]
+    fn test_suffix_with_digits_is_not_stripped() {
+        let result = parse_timecontrol("90 + 30 round2").unwrap();
+        assert_eq!(result.normalized, None);
+    }
+
+    #[test]
+    fn test_clock_style_base_with_increment() {
+        let result = parse_timecontrol("1:30.00 + 30 seconds increment from move 1").unwrap();
+        assert_eq!(result.normalized, Some("5400+30".to_string()));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w == "interpreted_clock_style_base")
+        );
+    }
+
+    #[test]
+    fn test_compact_fide_two_stage_with_game_token() {
+        let result = parse_timecontrol("90'/40+30'/G+30''").unwrap();
+        assert_eq!(result.normalized, Some("40/5400+30:1800+30".to_string()));
+    }
+
+    #[test]
+    fn test_compact_fide_two_stage_with_end_token_and_ampersand() {
+        let result = parse_timecontrol("90'/40m + 30'/end & 30/m").unwrap();
+        assert_eq!(result.normalized, Some("40/5400+30:1800+30".to_string()));
+    }
+
+    #[test]
+    fn test_compact_fide_two_stage_bonus_increment_wording() {
+        let result = parse_timecontrol("90'/40 moves + 30' + 30'' bonus increment").unwrap();
+        assert_eq!(result.normalized, Some("40/5400+30:1800+30".to_string()));
+    }
+
+    #[test]
+    fn test_compact_fide_two_stage_additional_wording() {
+        let result = parse_timecontrol("90mins+30second additional +30mins after move 40").unwrap();
+        assert_eq!(result.normalized, Some("40/5400+30:1800+30".to_string()));
+    }
+
+    #[test]
+    fn test_compact_fide_triple_plus() {
+        let result = parse_timecontrol("90 + 30 + 30s per move").unwrap();
+        assert_eq!(result.normalized, Some("40/5400+30:1800+30".to_string()));
+    }
+
+    #[test]
+    fn test_two_stage_slash_shorthand_missing_move_qualifier() {
+        let result = parse_timecontrol("90+30/30+30").unwrap();
+        assert_eq!(result.normalized, Some("5400+30:1800+30".to_string()));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w == "interpreted_two_stage_slash_shorthand")
         );
     }
 
