@@ -17,14 +17,17 @@ use pgn_reader::{Nag, Outcome, RawComment, Reader, SanPlus, Skip, Visitor};
 /// Returns a canonical string representation with standardized spacing.
 /// Spec: move-analysis - Moves Normalization
 pub fn normalize_movetext(movetext: &str) -> String {
-    let parsed = parse_movetext_mainline(movetext);
-
-    // Parse failures return an empty string (see change delta spec).
-    if parsed.parse_error {
+    if movetext.trim().is_empty() {
         return String::new();
     }
 
-    serialize_sans_to_movetext(&parsed.sans, parsed.outcome.as_deref())
+    let mut reader = Reader::new(io::Cursor::new(movetext.as_bytes()));
+    let mut visitor = NormalizeSerializeVisitor::default();
+
+    match reader.read_game(&mut visitor) {
+        Ok(Some(())) => visitor.output,
+        Ok(None) | Err(_) => String::new(),
+    }
 }
 
 pub(crate) struct ParsedMovetext {
@@ -64,32 +67,94 @@ pub(crate) fn parse_movetext_mainline(movetext: &str) -> ParsedMovetext {
     }
 }
 
-fn serialize_sans_to_movetext(sans: &[String], outcome: Option<&str>) -> String {
-    let mut out = String::new();
+#[derive(Default)]
+struct NormalizeSerializeVisitor {
+    output: String,
+    move_count: usize,
+    outcome: Option<String>,
+}
 
-    for (idx, san) in sans.iter().enumerate() {
-        if idx.is_multiple_of(2) {
-            if !out.is_empty() {
-                out.push(' ');
+impl Visitor for NormalizeSerializeVisitor {
+    type Tags = ();
+    type Movetext = ();
+    type Output = ();
+
+    fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
+        self.output.clear();
+        self.move_count = 0;
+        self.outcome = None;
+        ControlFlow::Continue(())
+    }
+
+    fn begin_movetext(&mut self, _tags: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        ControlFlow::Continue(())
+    }
+
+    fn san(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        san_plus: SanPlus,
+    ) -> ControlFlow<Self::Output> {
+        if self.move_count.is_multiple_of(2) {
+            if !self.output.is_empty() {
+                self.output.push(' ');
             }
-            let move_no = (idx / 2) + 1;
-            let _ = write!(out, "{}.", move_no);
-            out.push(' ');
-            out.push_str(san);
+            let move_no = (self.move_count / 2) + 1;
+            let _ = write!(self.output, "{}.", move_no);
+            self.output.push(' ');
         } else {
-            out.push(' ');
-            out.push_str(san);
+            self.output.push(' ');
         }
+
+        let _ = write!(self.output, "{}", san_plus);
+        self.move_count += 1;
+        ControlFlow::Continue(())
     }
 
-    if let Some(outcome) = outcome {
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(outcome);
+    fn nag(&mut self, _movetext: &mut Self::Movetext, _nag: Nag) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
     }
 
-    out
+    fn comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn partial_comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn begin_variation(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+    ) -> ControlFlow<Self::Output, Skip> {
+        ControlFlow::Continue(Skip(true))
+    }
+
+    fn outcome(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        outcome: Outcome,
+    ) -> ControlFlow<Self::Output> {
+        self.outcome = Some(outcome.to_string());
+        ControlFlow::Continue(())
+    }
+
+    fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {
+        if let Some(outcome) = self.outcome.take() {
+            if !self.output.is_empty() {
+                self.output.push(' ');
+            }
+            self.output.push_str(&outcome);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -183,8 +248,8 @@ impl VScalar for ChessMovesNormalizeScalar {
                 continue;
             }
 
-            let val = unsafe { decode_duckdb_string(*s) };
-            let normalized = normalize_movetext(&val);
+            let val = unsafe { decode_duckdb_string(s) };
+            let normalized = normalize_movetext(val.as_ref());
             output_vec.insert(i, CString::new(normalized)?);
         }
         Ok(())

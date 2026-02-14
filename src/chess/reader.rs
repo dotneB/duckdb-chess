@@ -4,6 +4,7 @@ use duckdb::{
     vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
 };
 use libduckdb_sys::{duckdb_date, duckdb_time_tz};
+use std::borrow::Cow;
 use std::ffi::CString;
 use std::fs::File;
 use std::path::PathBuf;
@@ -20,6 +21,53 @@ pub struct ReadPgnInitData {
 }
 
 pub struct ReadPgnVTab;
+
+fn append_parse_error(parse_error: &mut Option<String>, message: String) {
+    match parse_error {
+        Some(existing) => {
+            existing.push_str("; ");
+            existing.push_str(&message);
+        }
+        None => {
+            *parse_error = Some(message);
+        }
+    }
+}
+
+fn sanitize_for_cstring<'a>(
+    value: &'a str,
+    field_name: &str,
+    parse_error: &mut Option<String>,
+) -> Cow<'a, str> {
+    if value.contains('\0') {
+        append_parse_error(
+            parse_error,
+            format!("Sanitized interior NUL in {}", field_name),
+        );
+        Cow::Owned(value.replace('\0', " "))
+    } else {
+        Cow::Borrowed(value)
+    }
+}
+
+fn sanitize_for_cstring_silent(value: &str) -> Cow<'_, str> {
+    if value.contains('\0') {
+        Cow::Owned(value.replace('\0', " "))
+    } else {
+        Cow::Borrowed(value)
+    }
+}
+
+macro_rules! insert_optional_varchar {
+    ($vector:expr, $row:expr, $value:expr, $field_name:expr, $parse_error:expr) => {{
+        if let Some(value) = $value {
+            let sanitized = sanitize_for_cstring(value, $field_name, $parse_error);
+            $vector.insert($row, CString::new(sanitized.as_ref())?);
+        } else {
+            $vector.set_null($row);
+        }
+    }};
+}
 
 impl VTab for ReadPgnVTab {
     type InitData = ReadPgnInitData;
@@ -206,41 +254,57 @@ impl VTab for ReadPgnVTab {
                     let game = &reader.record_buffer;
                     let i = count;
 
-                    if let Some(ref val) = game.event {
-                        event_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        event_vec.set_null(i);
-                    }
-                    if let Some(ref val) = game.site {
-                        site_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        site_vec.set_null(i);
-                    }
-                    if let Some(ref val) = game.white {
-                        white_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        white_vec.set_null(i);
-                    }
-                    if let Some(ref val) = game.black {
-                        black_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        black_vec.set_null(i);
-                    }
-                    if let Some(ref val) = game.result {
-                        result_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        result_vec.set_null(i);
-                    }
-                    if let Some(ref val) = game.white_title {
-                        white_title_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        white_title_vec.set_null(i);
-                    }
-                    if let Some(ref val) = game.black_title {
-                        black_title_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        black_title_vec.set_null(i);
-                    }
+                    let mut row_parse_error = game.parse_error.clone();
+
+                    insert_optional_varchar!(
+                        &mut event_vec,
+                        i,
+                        game.event.as_deref(),
+                        "Event",
+                        &mut row_parse_error
+                    );
+                    insert_optional_varchar!(
+                        &mut site_vec,
+                        i,
+                        game.site.as_deref(),
+                        "Site",
+                        &mut row_parse_error
+                    );
+                    insert_optional_varchar!(
+                        &mut white_vec,
+                        i,
+                        game.white.as_deref(),
+                        "White",
+                        &mut row_parse_error
+                    );
+                    insert_optional_varchar!(
+                        &mut black_vec,
+                        i,
+                        game.black.as_deref(),
+                        "Black",
+                        &mut row_parse_error
+                    );
+                    insert_optional_varchar!(
+                        &mut result_vec,
+                        i,
+                        game.result.as_deref(),
+                        "Result",
+                        &mut row_parse_error
+                    );
+                    insert_optional_varchar!(
+                        &mut white_title_vec,
+                        i,
+                        game.white_title.as_deref(),
+                        "WhiteTitle",
+                        &mut row_parse_error
+                    );
+                    insert_optional_varchar!(
+                        &mut black_title_vec,
+                        i,
+                        game.black_title.as_deref(),
+                        "BlackTitle",
+                        &mut row_parse_error
+                    );
                     if let Some(val) = game.white_elo {
                         white_elo_vec.as_mut_slice::<u32>()[i] = val;
                     } else {
@@ -261,39 +325,55 @@ impl VTab for ReadPgnVTab {
                     } else {
                         utc_time_vec.set_null(i);
                     }
-                    if let Some(ref val) = game.eco {
-                        eco_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        eco_vec.set_null(i);
-                    }
-                    if let Some(ref val) = game.opening {
-                        opening_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        opening_vec.set_null(i);
-                    }
-                    if let Some(ref val) = game.termination {
-                        termination_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        termination_vec.set_null(i);
-                    }
-                    if let Some(ref val) = game.time_control {
-                        time_control_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        time_control_vec.set_null(i);
-                    }
+                    insert_optional_varchar!(
+                        &mut eco_vec,
+                        i,
+                        game.eco.as_deref(),
+                        "ECO",
+                        &mut row_parse_error
+                    );
+                    insert_optional_varchar!(
+                        &mut opening_vec,
+                        i,
+                        game.opening.as_deref(),
+                        "Opening",
+                        &mut row_parse_error
+                    );
+                    insert_optional_varchar!(
+                        &mut termination_vec,
+                        i,
+                        game.termination.as_deref(),
+                        "Termination",
+                        &mut row_parse_error
+                    );
+                    insert_optional_varchar!(
+                        &mut time_control_vec,
+                        i,
+                        game.time_control.as_deref(),
+                        "TimeControl",
+                        &mut row_parse_error
+                    );
 
-                    movetext_vec.insert(i, CString::new(game.movetext.as_str())?);
+                    let movetext = sanitize_for_cstring(
+                        game.movetext.as_str(),
+                        "movetext",
+                        &mut row_parse_error,
+                    );
+                    movetext_vec.insert(i, CString::new(movetext.as_ref())?);
 
-                    if let Some(ref val) = game.parse_error {
-                        parse_error_vec.insert(i, CString::new(val.as_str())?);
+                    insert_optional_varchar!(
+                        &mut source_vec,
+                        i,
+                        game.source.as_deref(),
+                        "Source",
+                        &mut row_parse_error
+                    );
+
+                    if let Some(parse_error) = row_parse_error.as_deref() {
+                        let parse_error = sanitize_for_cstring_silent(parse_error);
+                        parse_error_vec.insert(i, CString::new(parse_error.as_ref())?);
                     } else {
                         parse_error_vec.set_null(i);
-                    }
-
-                    if let Some(ref val) = game.source {
-                        source_vec.insert(i, CString::new(val.as_str())?);
-                    } else {
-                        source_vec.set_null(i);
                     }
 
                     count += 1;
@@ -371,6 +451,24 @@ mod tests {
         };
         assert_eq!(init_data.state.lock().unwrap().next_path_idx, 0);
         assert!(init_data.state.lock().unwrap().available_readers.is_empty());
+    }
+
+    #[test]
+    fn test_sanitize_for_cstring_preserves_clean_values() {
+        let mut parse_error = None;
+        let sanitized = sanitize_for_cstring("normal text", "Event", &mut parse_error);
+        assert_eq!(sanitized.as_ref(), "normal text");
+        assert!(parse_error.is_none());
+    }
+
+    #[test]
+    fn test_sanitize_for_cstring_replaces_interior_nul_and_records_error() {
+        let mut parse_error = None;
+        let sanitized = sanitize_for_cstring("A\0B", "Event", &mut parse_error);
+        assert_eq!(sanitized.as_ref(), "A B");
+
+        let message = parse_error.expect("expected parse_error message");
+        assert!(message.contains("Sanitized interior NUL in Event"));
     }
 
     // Test with actual PGN file content parsing

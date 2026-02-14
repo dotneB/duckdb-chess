@@ -32,8 +32,8 @@ impl VScalar for ChessTimecontrolNormalizeScalar {
                 continue;
             }
 
-            let val = unsafe { decode_duckdb_string(*s) };
-            match normalize_timecontrol(&val) {
+            let val = unsafe { decode_duckdb_string(s) };
+            match normalize_timecontrol(val.as_ref()) {
                 Some(normalized) => {
                     output_vec.insert(i, CString::new(normalized)?);
                 }
@@ -76,15 +76,15 @@ impl VScalar for ChessTimecontrolJsonScalar {
                 continue;
             }
 
-            let val = unsafe { decode_duckdb_string(*s) };
-            match parse_timecontrol(&val) {
+            let val = unsafe { decode_duckdb_string(s) };
+            match parse_timecontrol(val.as_ref()) {
                 Ok(parsed) => {
                     let json = timecontrol_to_json(&parsed);
                     output_vec.insert(i, CString::new(json)?);
                 }
                 Err(_) => {
                     let parsed = ParsedTimeControl {
-                        raw: val,
+                        raw: val.into_owned(),
                         normalized: None,
                         periods: Vec::new(),
                         mode: Mode::Unknown,
@@ -130,8 +130,8 @@ impl VScalar for ChessTimecontrolCategoryScalar {
                 continue;
             }
 
-            let val = unsafe { decode_duckdb_string(*s) };
-            match categorize_timecontrol(&val) {
+            let val = unsafe { decode_duckdb_string(s) };
+            match categorize_timecontrol(val.as_ref()) {
                 Some(category) => {
                     output_vec.insert(i, CString::new(category)?);
                 }

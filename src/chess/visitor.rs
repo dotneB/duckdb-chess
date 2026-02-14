@@ -12,6 +12,7 @@ fn create_time_tz(micros: i64, offset_seconds: i32) -> duckdb_time_tz {
     unsafe { duckdb_create_time_tz(micros, offset_seconds) }
 }
 use pgn_reader::{Outcome, RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
+use std::fmt::Write;
 use std::fs::File;
 use std::ops::ControlFlow;
 
@@ -22,29 +23,82 @@ use std::ops::ControlFlow;
 /// (whitespace-normalized). Result is captured separately via `outcome()` (or
 /// the `Result` tag as fallback).
 pub struct GameVisitor {
-    headers: Vec<(String, String)>,
+    headers: HeaderFields,
     movetext_buffer: String,
     move_count: u32,
     result_marker: Option<String>,
     pub current_game: Option<GameRecord>,
 }
 
+#[derive(Default)]
+struct HeaderFields {
+    event: Option<String>,
+    site: Option<String>,
+    source: Option<String>,
+    white: Option<String>,
+    black: Option<String>,
+    result: Option<String>,
+    white_title: Option<String>,
+    black_title: Option<String>,
+    white_elo: Option<String>,
+    black_elo: Option<String>,
+    utc_date: Option<String>,
+    date: Option<String>,
+    event_date: Option<String>,
+    utc_time: Option<String>,
+    time: Option<String>,
+    eco: Option<String>,
+    opening: Option<String>,
+    termination: Option<String>,
+    time_control: Option<String>,
+}
+
+impl HeaderFields {
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn set_known_tag(&mut self, key: &[u8], value: String) {
+        let slot = match key {
+            b"Event" => Some(&mut self.event),
+            b"Site" => Some(&mut self.site),
+            b"Source" => Some(&mut self.source),
+            b"White" => Some(&mut self.white),
+            b"Black" => Some(&mut self.black),
+            b"Result" => Some(&mut self.result),
+            b"WhiteTitle" => Some(&mut self.white_title),
+            b"BlackTitle" => Some(&mut self.black_title),
+            b"WhiteElo" => Some(&mut self.white_elo),
+            b"BlackElo" => Some(&mut self.black_elo),
+            b"UTCDate" => Some(&mut self.utc_date),
+            b"Date" => Some(&mut self.date),
+            b"EventDate" => Some(&mut self.event_date),
+            b"UTCTime" => Some(&mut self.utc_time),
+            b"Time" => Some(&mut self.time),
+            b"ECO" => Some(&mut self.eco),
+            b"Opening" => Some(&mut self.opening),
+            b"Termination" => Some(&mut self.termination),
+            b"TimeControl" => Some(&mut self.time_control),
+            _ => None,
+        };
+
+        if let Some(slot) = slot
+            && slot.is_none()
+        {
+            *slot = Some(value);
+        }
+    }
+}
+
 impl GameVisitor {
     pub fn new() -> Self {
         Self {
-            headers: Vec::new(),
+            headers: HeaderFields::default(),
             movetext_buffer: String::new(),
             move_count: 0,
             result_marker: None,
             current_game: None,
         }
-    }
-
-    fn get_header(&self, key: &str) -> Option<String> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.clone())
     }
 
     fn push_error(parse_error: &mut Option<String>, msg: String) {
@@ -109,14 +163,14 @@ impl GameVisitor {
         first_day_next_month.pred_opt().map(|d| d.day())
     }
 
-    fn rank_date_candidates(
-        utc_date: Option<String>,
-        date: Option<String>,
-        event_date: Option<String>,
-    ) -> Vec<(String, &'static str)> {
+    fn rank_date_candidates<'a>(
+        utc_date: Option<&'a str>,
+        date: Option<&'a str>,
+        event_date: Option<&'a str>,
+    ) -> Vec<(&'a str, &'static str)> {
         // Rank by completeness first; if tied, prefer header precedence:
         // UTCDate -> Date -> EventDate
-        let mut ranked: Vec<(u8, u8, String, &'static str)> = Vec::new();
+        let mut ranked: Vec<(u8, u8, &'a str, &'static str)> = Vec::new();
 
         for (precedence, raw, label) in [
             (0u8, utc_date, "UTCDate"),
@@ -142,9 +196,9 @@ impl GameVisitor {
     }
 
     fn parse_best_date_field(
-        utc_date: Option<String>,
-        date: Option<String>,
-        event_date: Option<String>,
+        utc_date: Option<&str>,
+        date: Option<&str>,
+        event_date: Option<&str>,
         parse_error: &mut Option<String>,
     ) -> Option<duckdb_date> {
         for (raw, label) in Self::rank_date_candidates(utc_date, date, event_date) {
@@ -157,7 +211,7 @@ impl GameVisitor {
     }
 
     fn parse_date_field(
-        raw: String,
+        raw: &str,
         label: &str,
         parse_error: &mut Option<String>,
     ) -> Option<duckdb_date> {
@@ -291,12 +345,11 @@ impl GameVisitor {
     }
 
     fn parse_uinteger_field(
-        raw: Option<String>,
+        raw: Option<&str>,
         label: &str,
         parse_error: &mut Option<String>,
     ) -> Option<u32> {
-        let raw = raw?;
-        let s = raw.trim();
+        let s = raw?.trim();
         if s.is_empty() {
             return None;
         }
@@ -310,7 +363,7 @@ impl GameVisitor {
     }
 
     fn parse_time_tz_field(
-        raw: String,
+        raw: &str,
         label: &str,
         parse_error: &mut Option<String>,
     ) -> Option<duckdb_time_tz> {
@@ -369,8 +422,8 @@ impl GameVisitor {
     }
 
     fn parse_best_time_tz_field(
-        utc_time: Option<String>,
-        time: Option<String>,
+        utc_time: Option<&str>,
+        time: Option<&str>,
         parse_error: &mut Option<String>,
     ) -> Option<duckdb_time_tz> {
         if let Some(raw) = utc_time
@@ -417,93 +470,63 @@ impl GameVisitor {
         Some(hh * 3600 + mm * 60)
     }
 
-    fn finalize_game(&mut self) {
-        let mut parse_error: Option<String> = None;
-
-        let white_elo =
-            Self::parse_uinteger_field(self.get_header("WhiteElo"), "WhiteElo", &mut parse_error);
-        let black_elo =
-            Self::parse_uinteger_field(self.get_header("BlackElo"), "BlackElo", &mut parse_error);
+    fn build_game_record(&mut self, mut parse_error: Option<String>) {
+        let white_elo = Self::parse_uinteger_field(
+            self.headers.white_elo.as_deref(),
+            "WhiteElo",
+            &mut parse_error,
+        );
+        let black_elo = Self::parse_uinteger_field(
+            self.headers.black_elo.as_deref(),
+            "BlackElo",
+            &mut parse_error,
+        );
 
         let utc_date = Self::parse_best_date_field(
-            self.get_header("UTCDate"),
-            self.get_header("Date"),
-            self.get_header("EventDate"),
+            self.headers.utc_date.as_deref(),
+            self.headers.date.as_deref(),
+            self.headers.event_date.as_deref(),
             &mut parse_error,
         );
         let utc_time = Self::parse_best_time_tz_field(
-            self.get_header("UTCTime"),
-            self.get_header("Time"),
+            self.headers.utc_time.as_deref(),
+            self.headers.time.as_deref(),
             &mut parse_error,
         );
 
         self.current_game = Some(GameRecord {
-            event: self.get_header("Event"),
-            site: self.get_header("Site"),
-            source: self.get_header("Source"),
-            white: self.get_header("White"),
-            black: self.get_header("Black"),
+            event: self.headers.event.clone(),
+            site: self.headers.site.clone(),
+            source: self.headers.source.clone(),
+            white: self.headers.white.clone(),
+            black: self.headers.black.clone(),
             result: self
-                .get_header("Result")
+                .headers
+                .result
+                .clone()
                 .or_else(|| self.result_marker.clone()),
-            white_title: self.get_header("WhiteTitle"),
-            black_title: self.get_header("BlackTitle"),
+            white_title: self.headers.white_title.clone(),
+            black_title: self.headers.black_title.clone(),
             white_elo,
             black_elo,
             utc_date,
             utc_time,
-            eco: self.get_header("ECO"),
-            opening: self.get_header("Opening"),
-            termination: self.get_header("Termination"),
-            time_control: self.get_header("TimeControl"),
+            eco: self.headers.eco.clone(),
+            opening: self.headers.opening.clone(),
+            termination: self.headers.termination.clone(),
+            time_control: self.headers.time_control.clone(),
             movetext: self.movetext_buffer.trim().to_string(),
             parse_error,
         });
     }
 
+    fn finalize_game(&mut self) {
+        self.build_game_record(None);
+    }
+
     /// Spec: pgn-parsing - Error Message Capture
     pub fn finalize_game_with_error(&mut self, error_msg: String) {
-        let mut parse_error: Option<String> = Some(error_msg);
-
-        let white_elo =
-            Self::parse_uinteger_field(self.get_header("WhiteElo"), "WhiteElo", &mut parse_error);
-        let black_elo =
-            Self::parse_uinteger_field(self.get_header("BlackElo"), "BlackElo", &mut parse_error);
-
-        let utc_date = Self::parse_best_date_field(
-            self.get_header("UTCDate"),
-            self.get_header("Date"),
-            self.get_header("EventDate"),
-            &mut parse_error,
-        );
-        let utc_time = Self::parse_best_time_tz_field(
-            self.get_header("UTCTime"),
-            self.get_header("Time"),
-            &mut parse_error,
-        );
-
-        self.current_game = Some(GameRecord {
-            event: self.get_header("Event"),
-            site: self.get_header("Site"),
-            source: self.get_header("Source"),
-            white: self.get_header("White"),
-            black: self.get_header("Black"),
-            result: self
-                .get_header("Result")
-                .or_else(|| self.result_marker.clone()),
-            white_title: self.get_header("WhiteTitle"),
-            black_title: self.get_header("BlackTitle"),
-            white_elo,
-            black_elo,
-            utc_date,
-            utc_time,
-            eco: self.get_header("ECO"),
-            opening: self.get_header("Opening"),
-            termination: self.get_header("Termination"),
-            time_control: self.get_header("TimeControl"),
-            movetext: self.movetext_buffer.trim().to_string(),
-            parse_error,
-        });
+        self.build_game_record(Some(error_msg));
     }
 }
 
@@ -552,14 +575,13 @@ impl Visitor for GameVisitor {
         key: &[u8],
         value: RawTag<'_>,
     ) -> ControlFlow<Self::Output> {
-        let key_str = String::from_utf8_lossy(key).to_string();
-        let value_str = String::from_utf8_lossy(value.as_bytes()).to_string();
-        self.headers.push((key_str, value_str));
+        let value_str = String::from_utf8_lossy(value.as_bytes()).into_owned();
+        self.headers.set_known_tag(key, value_str);
         ControlFlow::Continue(())
     }
 
     fn begin_movetext(&mut self, _: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
-        ControlFlow::Continue(String::new())
+        ControlFlow::Continue(String::with_capacity(256))
     }
 
     fn begin_variation(&mut self, _: &mut Self::Movetext) -> ControlFlow<Self::Output, Skip> {
@@ -572,10 +594,10 @@ impl Visitor for GameVisitor {
         }
 
         if self.move_count.is_multiple_of(2) {
-            movetext.push_str(&format!("{}. ", (self.move_count / 2) + 1));
+            let _ = write!(movetext, "{}. ", (self.move_count / 2) + 1);
         }
 
-        movetext.push_str(&san.to_string());
+        let _ = write!(movetext, "{}", san);
         self.move_count += 1;
         ControlFlow::Continue(())
     }
@@ -590,7 +612,11 @@ impl Visitor for GameVisitor {
         if !movetext.is_empty() {
             movetext.push(' ');
         }
-        movetext.push_str(&format!("{{ {} }}", comment_str.trim()));
+        movetext.push('{');
+        movetext.push(' ');
+        movetext.push_str(comment_str.trim());
+        movetext.push(' ');
+        movetext.push('}');
 
         ControlFlow::Continue(())
     }
@@ -608,7 +634,7 @@ impl Visitor for GameVisitor {
         let marker = self
             .result_marker
             .clone()
-            .or_else(|| self.get_header("Result"));
+            .or_else(|| self.headers.result.clone());
         self.result_marker = marker;
 
         self.movetext_buffer = movetext;
@@ -638,6 +664,24 @@ mod tests {
         assert_eq!(game.site.as_deref(), Some("Internet"));
         assert_eq!(game.result.as_deref(), Some("1-0"));
         assert_eq!(game.movetext, "1. e4 e5 2. Nf3");
+    }
+
+    #[test]
+    fn test_visitor_duplicate_headers_preserve_first_value() {
+        let pgn = r#"[Event "First Event"]
+[Event "Second Event"]
+[WhiteElo "2000"]
+[WhiteElo "2500"]
+1. e4 1-0"#;
+
+        let mut reader = Reader::new(pgn.as_bytes());
+        let mut visitor = GameVisitor::new();
+
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.expect("Should have parsed a game");
+        assert_eq!(game.event.as_deref(), Some("First Event"));
+        assert_eq!(game.white_elo, Some(2000));
     }
 
     #[test]

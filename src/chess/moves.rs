@@ -11,6 +11,7 @@ use std::error::Error;
 use std::ffi::CString;
 use std::fmt::Write;
 use std::io;
+use std::ops::ControlFlow;
 
 use crate::chess::duckdb_string::decode_duckdb_string;
 use crate::chess::filter::parse_movetext_mainline;
@@ -43,7 +44,7 @@ impl VScalar for ChessMovesJsonScalar {
                 continue;
             }
 
-            let val = unsafe { decode_duckdb_string(*s) };
+            let val = unsafe { decode_duckdb_string(s) };
 
             let max_ply = match &max_ply_vec {
                 None => None,
@@ -56,7 +57,7 @@ impl VScalar for ChessMovesJsonScalar {
                 }
             };
 
-            match process_moves_with_limit(&val, max_ply) {
+            match process_moves_with_limit(val.as_ref(), max_ply) {
                 Ok(json) => {
                     output_vec.insert(i, CString::new(json)?);
                 }
@@ -90,58 +91,137 @@ fn process_moves_with_limit(
     movetext: &str,
     max_ply: Option<i64>,
 ) -> Result<String, Box<dyn Error>> {
+    if movetext.trim().is_empty() {
+        return Ok("[]".to_string());
+    }
+
     if let Some(max_ply) = max_ply
         && max_ply <= 0
     {
         return Ok("[]".to_string());
     }
 
-    let parsed = parse_movetext_mainline(movetext);
-    let mut pos = Chess::default();
-    let mut json = String::new();
+    let max_ply_limit = max_ply.and_then(|v| usize::try_from(v).ok());
+    let mut reader = Reader::new(io::Cursor::new(movetext.as_bytes()));
+    let mut visitor = MovesJsonVisitor::new(max_ply_limit);
 
-    json.push('[');
+    let _ = reader.read_game(&mut visitor);
+    Ok(visitor.finish())
+}
 
-    let mut first = true;
-    let mut ply = 0;
+struct MovesJsonVisitor {
+    position: Chess,
+    json: String,
+    first: bool,
+    ply: usize,
+    max_ply: Option<usize>,
+}
 
-    for token in parsed.sans {
-        let san: SanPlus = match token.parse() {
-            Ok(s) => s,
-            Err(_) => break,
+impl MovesJsonVisitor {
+    fn new(max_ply: Option<usize>) -> Self {
+        let mut visitor = Self {
+            position: Chess::default(),
+            json: String::new(),
+            first: true,
+            ply: 0,
+            max_ply,
         };
-
-        let m = match san.san.to_move(&pos) {
-            Ok(m) => m,
-            Err(_) => break,
-        };
-
-        pos.play_unchecked(m);
-        ply += 1;
-
-        if let Some(max_ply) = max_ply
-            && ply > max_ply
-        {
-            break;
-        }
-
-        if !first {
-            json.push(',');
-        }
-        first = false;
-
-        let fen = duckdb_fen(&pos);
-        let epd = fen_str_to_epd(&fen).unwrap_or_default();
-
-        write!(
-            json,
-            r#"{{"ply":{},"move":"{}","fen":"{}","epd":"{}"}}"#,
-            ply, token, fen, epd
-        )?;
+        visitor.reset();
+        visitor
     }
 
-    json.push(']');
-    Ok(json)
+    fn reset(&mut self) {
+        self.position = Chess::default();
+        self.json.clear();
+        self.json.push('[');
+        self.first = true;
+        self.ply = 0;
+    }
+
+    fn finish(mut self) -> String {
+        self.json.push(']');
+        self.json
+    }
+}
+
+impl Visitor for MovesJsonVisitor {
+    type Tags = ();
+    type Movetext = ();
+    type Output = ();
+
+    fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
+        self.reset();
+        ControlFlow::Continue(())
+    }
+
+    fn begin_movetext(&mut self, _tags: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        ControlFlow::Continue(())
+    }
+
+    fn san(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        san_plus: PgnSanPlus,
+    ) -> ControlFlow<Self::Output> {
+        if let Some(max_ply) = self.max_ply
+            && self.ply >= max_ply
+        {
+            return ControlFlow::Break(());
+        }
+
+        let next_move = match san_plus.san.to_move(&self.position) {
+            Ok(next_move) => next_move,
+            Err(_) => return ControlFlow::Break(()),
+        };
+
+        self.position.play_unchecked(next_move);
+        self.ply += 1;
+
+        if !self.first {
+            self.json.push(',');
+        }
+        self.first = false;
+
+        let fen = duckdb_fen(&self.position);
+        let epd = fen_str_to_epd(&fen).unwrap_or_default();
+
+        let _ = write!(
+            self.json,
+            r#"{{"ply":{},"move":"{}","fen":"{}","epd":"{}"}}"#,
+            self.ply, san_plus, fen, epd
+        );
+
+        ControlFlow::Continue(())
+    }
+
+    fn nag(&mut self, _movetext: &mut Self::Movetext, _nag: Nag) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn partial_comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn begin_variation(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+    ) -> ControlFlow<Self::Output, Skip> {
+        ControlFlow::Continue(Skip(true))
+    }
+
+    fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {}
 }
 
 fn duckdb_fen(pos: &Chess) -> String {
@@ -191,8 +271,8 @@ impl VScalar for ChessFenEpdScalar {
                 continue;
             }
 
-            let val = unsafe { decode_duckdb_string(*s) };
-            match fen_to_epd(&val) {
+            let val = unsafe { decode_duckdb_string(s) };
+            match fen_to_epd(val.as_ref()) {
                 Some(epd) => output_vec.insert(i, CString::new(epd)?),
                 None => output_vec.set_null(i),
             }
@@ -233,8 +313,8 @@ impl VScalar for ChessPlyCountScalar {
                 continue;
             }
 
-            let val = unsafe { decode_duckdb_string(*s) };
-            output_slice[i] = ply_count(&val);
+            let val = unsafe { decode_duckdb_string(s) };
+            output_slice[i] = ply_count(val.as_ref());
         }
 
         Ok(())
@@ -253,12 +333,71 @@ fn ply_count(movetext: &str) -> i64 {
         return 0;
     }
 
-    let parsed = parse_movetext_mainline(movetext);
-    if parsed.parse_error {
-        return 0;
+    let mut reader = Reader::new(io::Cursor::new(movetext.as_bytes()));
+    let mut visitor = PlyCountVisitor::default();
+
+    match reader.read_game(&mut visitor) {
+        Ok(Some(())) => visitor.count as i64,
+        Ok(None) | Err(_) => 0,
+    }
+}
+
+#[derive(Default)]
+struct PlyCountVisitor {
+    count: usize,
+}
+
+impl Visitor for PlyCountVisitor {
+    type Tags = ();
+    type Movetext = ();
+    type Output = ();
+
+    fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
+        self.count = 0;
+        ControlFlow::Continue(())
     }
 
-    parsed.sans.len() as i64
+    fn begin_movetext(&mut self, _tags: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        ControlFlow::Continue(())
+    }
+
+    fn san(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _san_plus: PgnSanPlus,
+    ) -> ControlFlow<Self::Output> {
+        self.count += 1;
+        ControlFlow::Continue(())
+    }
+
+    fn nag(&mut self, _movetext: &mut Self::Movetext, _nag: Nag) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn partial_comment(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+        _comment: RawComment<'_>,
+    ) -> ControlFlow<Self::Output> {
+        ControlFlow::Continue(())
+    }
+
+    fn begin_variation(
+        &mut self,
+        _movetext: &mut Self::Movetext,
+    ) -> ControlFlow<Self::Output, Skip> {
+        ControlFlow::Continue(Skip(true))
+    }
+
+    fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {}
 }
 
 // Spec: move-analysis - Moves Hashing
@@ -385,8 +524,8 @@ impl VScalar for ChessMovesHashScalar {
                 continue;
             }
 
-            let val = unsafe { decode_duckdb_string(*s) };
-            match movetext_final_zobrist_hash(&val) {
+            let val = unsafe { decode_duckdb_string(s) };
+            match movetext_final_zobrist_hash(val.as_ref()) {
                 Some(v) => output_vec.as_mut_slice::<u64>()[i] = v,
                 None => output_vec.set_null(i),
             }
@@ -427,10 +566,11 @@ impl VScalar for ChessMovesSubsetScalar {
                 continue;
             }
 
-            let short_text = unsafe { decode_duckdb_string(input_slice_0[i]) };
-            let long_text = unsafe { decode_duckdb_string(input_slice_1[i]) };
+            let short_text = unsafe { decode_duckdb_string(&input_slice_0[i]) };
+            let long_text = unsafe { decode_duckdb_string(&input_slice_1[i]) };
 
-            output_vec.as_mut_slice::<bool>()[i] = check_moves_subset(&short_text, &long_text);
+            output_vec.as_mut_slice::<bool>()[i] =
+                check_moves_subset(short_text.as_ref(), long_text.as_ref());
         }
         Ok(())
     }
@@ -680,6 +820,20 @@ mod tests {
     }
 
     #[test]
+    fn test_process_moves_malformed_non_pgn_returns_empty_array() {
+        let json = process_moves_with_limit("this is not movetext", None).unwrap();
+        assert_eq!(json, "[]");
+    }
+
+    #[test]
+    fn test_process_moves_unterminated_comment_keeps_valid_prefix() {
+        let json = process_moves_with_limit("1. e4 { unterminated comment", None).unwrap();
+        assert!(json.starts_with('['));
+        assert!(json.ends_with(']'));
+        assert!(json.contains(r#""ply":1,"move":"e4""#));
+    }
+
+    #[test]
     fn test_fen_to_epd_valid() {
         let fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
         assert_eq!(
@@ -700,6 +854,17 @@ mod tests {
         assert_eq!(ply_count("1. e4 e5 INVALID 2. Nf3"), 3);
         assert_eq!(ply_count("1. e4 INVALID 2. Nf3"), 2);
         assert_eq!(ply_count("1. e4 e5 2. Kxe8"), 3);
+    }
+
+    #[test]
+    fn test_ply_count_malformed_parse_returns_zero() {
+        assert_eq!(ply_count("1. e4 { unterminated comment"), 0);
+    }
+
+    #[test]
+    fn test_ply_count_empty_or_whitespace_returns_zero() {
+        assert_eq!(ply_count(""), 0);
+        assert_eq!(ply_count("   \n\t"), 0);
     }
 
     #[test]
