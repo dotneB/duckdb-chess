@@ -1,0 +1,67 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/rust
+{
+	"name": "Rust",
+	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+	"image": "mcr.microsoft.com/devcontainers/rust:2-1-trixie",
+
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	"features": {
+		"ghcr.io/devcontainers/features/python:1": {
+			"installTools": true,
+			"version": "latest"
+		},
+		"ghcr.io/devcontainers/features/rust:1": {
+			"version": "latest",
+			"profile": "minimal",
+			"targets": "aarch64-unknown-linux-gnu",
+			"components": "rust-analyzer,rust-src,rustfmt,clippy"
+		},
+		"ghcr.io/eitsupi/devcontainer-features/duckdb-cli:1": {
+			"version": "latest",
+			"extensions": "",
+			"communityExtensions": ""
+		},
+		"ghcr.io/guiyomh/features/just:0": {
+			"version": "latest"
+		}
+	},
+
+	// Keep Linux build artifacts out of the host bind mount.
+	"mounts": [
+		{
+			"source": "devcontainer-target-cache-${devcontainerId}",
+			"target": "${containerWorkspaceFolder}/target",
+			"type": "volume"
+		},
+		{
+			"source": "devcontainer-cargo-cache-${devcontainerId}",
+			"target": "/usr/local/cargo",
+			"type": "volume"
+		},
+		{
+			"source": "devcontainer-py-configure-cache-${devcontainerId}",
+			"target": "${containerWorkspaceFolder}/configure",
+			"type": "volume"
+		},
+		{
+			"source": "devcontainer-py-build-cache-${devcontainerId}",
+			"target": "${containerWorkspaceFolder}/build",
+			"type": "volume"
+		},
+	],
+
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+
+	// Use 'postCreateCommand' to run commands after the container is created.
+	"postCreateCommand": "sudo chown -R vscode:vscode ${containerWorkspaceFolder}/target /usr/local/cargo ${containerWorkspaceFolder}/configure ${containerWorkspaceFolder}/build && bash .devcontainer/post-create.sh",
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	"remoteUser": "vscode",
+
+	"updateRemoteUserUID": true
+
+	// Configure tool-specific properties.
+	// "customizations": {},
+}
