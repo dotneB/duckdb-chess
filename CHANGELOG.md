@@ -1,3 +1,19 @@
+## [0.4.0] - 2026-02-15
+
+### 🚀 Features
+
+- Add TimeControl tag normalization utilities
+- Add chess_timecontrol_category
+
+### 🐛 Bug Fixes
+
+- Attempting to reduce the amount of memory allocations
+- Increased coverage for timecontrol normalization of LumbraGigabase
+
+### ⚙️ Miscellaneous Tasks
+
+- More portable justfile
+
 ## [0.3.1] - 2026-02-08
 
 ### 🐛 Bug Fixes
