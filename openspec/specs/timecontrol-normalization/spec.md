@@ -222,3 +222,18 @@ The system SHALL derive categories from existing TimeControl parsing rules so th
 #### Scenario: Unparseable value returns NULL
 - **WHEN** the input is `klassisch`
 - **THEN** the output is NULL
+
+### Requirement: TimeControl pipeline materialization guidance
+The project SHALL document practical SQL patterns for materializing analytics-ready TimeControl columns from `chess_timecontrol_normalize`, `chess_timecontrol_json`, and `chess_timecontrol_category`.
+
+#### Scenario: Materialized normalized and category columns
+- **WHEN** users build persistent analytic tables from `read_pgn`
+- **THEN** documentation includes a pattern that materializes normalized TimeControl and category columns for repeated filtering/aggregation
+
+#### Scenario: JSON parse details extraction
+- **WHEN** users need typed fields such as base seconds, increment seconds, or inference flags
+- **THEN** documentation includes a JSON extraction pattern over `chess_timecontrol_json(...)` to derive those fields in SQL
+
+#### Scenario: NULL-safe materialization guidance
+- **WHEN** users materialize TimeControl-derived columns at scale
+- **THEN** examples include NULL handling for missing/unparseable values so analytic semantics stay deterministic

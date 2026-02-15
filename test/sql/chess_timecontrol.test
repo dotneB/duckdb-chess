@@ -20,6 +20,32 @@ SELECT chess_timecontrol_category(NULL);
 ----
 NULL
 
+# Materialization-style JSON extraction helpers
+query I
+SELECT json_extract(chess_timecontrol_json('3+2')::JSON, '$.periods[0].base')::INTEGER;
+----
+180
+
+query I
+SELECT json_extract(chess_timecontrol_json('3+2')::JSON, '$.periods[0].increment')::INTEGER;
+----
+2
+
+query I
+SELECT json_extract(chess_timecontrol_json('3+2')::JSON, '$.inferred')::BOOLEAN;
+----
+true
+
+query I
+SELECT json_extract(chess_timecontrol_json('klassisch')::JSON, '$.periods[0].base')::INTEGER;
+----
+NULL
+
+query I
+SELECT json_extract(chess_timecontrol_json(NULL)::JSON, '$.periods[0].base')::INTEGER;
+----
+NULL
+
 # Test strict parsing - already spec-shaped values
 query I
 SELECT chess_timecontrol_normalize('180+2');

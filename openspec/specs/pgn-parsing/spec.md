@@ -98,26 +98,27 @@ The system SHALL output parsed games in chunks to manage memory efficiently for 
 ### Requirement: Thread Safety
 The system SHALL ensure thread-safe access to shared parsing state across multiple table function calls.
 
-#### Scenario: Atomic state management
+#### Scenario: Shared state synchronization
 - **WHEN** multiple DuckDB threads access the table function
-- **THEN** atomic flags and mutexes protect shared game data and offset tracking
+- **THEN** a mutex-protected shared reader state coordinates path assignment and reusable per-file readers safely across threads
 
-### Requirement: Visitor Pattern Implementation
-The system SHALL use the pgn-reader library's `Reader` and `Visitor` trait for streaming PGN parsing, calling `read_game()` directly on a `Reader<File>` instance without intermediate buffering layers.
+### Requirement: Streaming parser integration
+The system SHALL use a streaming PGN parser integration to process games incrementally from file handles, without materializing whole files in memory and without adding redundant buffering layers.
 
 #### Scenario: Direct streaming from file
 - **WHEN** the table function opens a PGN file for parsing
-- **THEN** it creates a `Reader<File>` instance directly from the file handle
+- **THEN** it creates a streaming parser instance directly from the file handle
 - **AND** it does NOT wrap the file in a `BufReader` (pgn-reader handles buffering internally)
 
 #### Scenario: Game parsing via read_game
 - **WHEN** the table function needs to parse the next game
-- **THEN** it calls `read_game(&mut visitor)` on the `Reader<File>` instance
-- **AND** the visitor methods (`begin_tags`, `tag`, `begin_movetext`, `san`, `outcome`, `comment`, `end_game`) are invoked by the reader
+- **THEN** it calls the parser's single-game read API (`read_game`) to advance one game at a time
+- **AND** parser callbacks populate headers, movetext, and outcome metadata for row construction
 
 #### Scenario: Header tag collection
 - **WHEN** the visitor encounters PGN header tags
-- **THEN** all key-value pairs are collected into the headers vector
+- **THEN** known output tags are captured directly into dedicated header fields used for row construction
+- **AND** unsupported tags remain non-blocking and do not affect required output columns
 
 #### Scenario: Movetext accumulation
 - **WHEN** the visitor encounters chess moves
@@ -194,4 +195,3 @@ The visitor SHALL build mainline movetext using append-oriented string operation
 #### Scenario: Comment formatting parity
 - **WHEN** parsing comments within `{...}` blocks
 - **THEN** comments remain represented in `{ ... }` form with existing whitespace-normalization semantics
-

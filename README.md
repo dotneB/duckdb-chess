@@ -33,6 +33,9 @@ SELECT chess_moves_hash('1. e4 e5 2. Nf3 Nc6') AS hash;
 -- Ply count
 SELECT chess_ply_count('1. e4 e5 2. Nf3') AS ply;
 
+-- Normalize Time control notation
+SELECT chess_timecontrol_normalize('90min./40 + 30min. + 30s./move'); -- 40/5400+30:1800+30
+
 -- Converts FEN to EPD
 SELECT chess_fen_epd('rnbq1rk1/1pp1bppp/p3pn2/8/2pP4/2N2NP1/PP2PPBP/R1BQ1RK1 w - - 0 8') AS epd;
 
