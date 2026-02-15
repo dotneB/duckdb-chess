@@ -29,14 +29,14 @@ Rust tests
 SQLLogicTest (DuckDB integration)
 
 - One file (debug build):
-  - `just debug && duckdb-slt.exe -e ./target/debug/chess.duckdb_extension -u -w "%CD%" "test/sql/read_pgn.test"`
+  - `just debug && duckdb-slt -e ./target/debug/chess.duckdb_extension -u -w . test/sql/read_pgn.test`
 - One file (release build):
-  - `just release && duckdb-slt.exe -e ./target/release/chess.duckdb_extension -u -w "%CD%" "test/sql/read_pgn.test"`
+  - `just release && duckdb-slt -e ./target/release/chess.duckdb_extension -u -w . test/sql/read_pgn.test`
 
 Notes
 
 - `just test` / `just test-release` run all `test/sql/*.test`.
-- On non-Windows environments the runner binary is `duckdb-slt` (no `.exe`).
+- The runner binary is `duckdb-slt`.
 
 
 Runtime / local loading
