@@ -7,8 +7,127 @@ use duckdb::{
 use libduckdb_sys::duckdb_string_t;
 use std::error::Error;
 use std::ffi::CString;
+use std::sync::LazyLock;
 
 use crate::chess::duckdb_string::decode_duckdb_string;
+
+static TRAILING_QUALIFIER_SUFFIX_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^(.+?)\s+(\p{L}+)$").expect("valid trailing qualifier suffix regex")
+});
+
+const PER_MOVE_RE: &str = r"(?:per\s*move|/move|/mv|/m)";
+const FROM_MOVE_RE: &str = r"(?:from\s*move\s*\w+)";
+const INCREMENT_WORDING_RE: &str = r"(?:increment|inc|incr|added|additional)";
+
+const MINUTE_UNIT_RE: &str = r"(?:minutes?|mins?|mns?|min(?:\.|utes?)?|m\.?|m)";
+const SECOND_UNIT_RE: &str = r"(?:seconds?|secs?|sec\.?|s\.?|sek|ss|secss)";
+
+static G_PREFIX_NUMERIC_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(
+        r"^(\d+)\s*(?:\+\s*(\d+)\s*(?:inc|{}\s*(?:(?:added\s+)?{}))?)?$",
+        SECOND_UNIT_RE, PER_MOVE_RE,
+    ))
+    .expect("valid g-prefix numeric regex")
+});
+
+static APOSTROPHE_PER_MOVE_SHORTHAND_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(?i)^\s*(\d+)\s*'\s*\+\s*(\d+)\s*''\s*/\s*(?:m|mv|move)\b.*$")
+        .expect("valid apostrophe per-move shorthand regex")
+});
+
+static COMPACT_MINUTE_SECOND_INCREMENT_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(
+        r"(?i)^\s*(?:[\p{{L}}\s]+:\s*)?(\d+)\s*{}?\s*\+\s*(\d+)\s*{}\b(?:\s*{})?(?:\s*(?:{}|{}))?\s*$",
+        MINUTE_UNIT_RE, SECOND_UNIT_RE, INCREMENT_WORDING_RE, FROM_MOVE_RE, PER_MOVE_RE,
+    ))
+    .expect("valid compact minute-second increment regex")
+});
+
+static CLOCK_STYLE_INCREMENT_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(
+        r"(?i)^\s*(\d+)\s*:\s*([0-5]?\d)(?:\.\d+)?\s*\+\s*(\d+)\s*{}\b(?:\s*{})?(?:\s*(?:{}|{}))?\s*$",
+        SECOND_UNIT_RE, INCREMENT_WORDING_RE, FROM_MOVE_RE, PER_MOVE_RE,
+    ))
+    .expect("valid clock-style increment regex")
+});
+
+static COMPACT_FIDE_APOSTROPHE_WITH_MOVE_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)^\s*(\d+)\s*'\s*/\s*(\d+)\s*(?:m|moves?)?\s*(?:\+|&)\s*(\d+)\s*'\s*/\s*(?:g|end)\s*(?:\+|&)\s*(\d+)\s*(?:''?)?\s*/\s*(?:m|mv|move)\b.*$",
+    )
+    .expect("valid compact FIDE apostrophe with-move regex")
+});
+
+static COMPACT_FIDE_APOSTROPHE_G_COMPACT_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)^\s*(\d+)\s*'\s*/\s*(\d+)\s*(?:m|moves?)?\s*(?:\+|&)\s*(\d+)\s*'\s*/\s*(?:g|end)\s*(?:\+|&)\s*(\d+)\s*''\s*$",
+    )
+    .expect("valid compact FIDE apostrophe g-compact regex")
+});
+
+static COMPACT_FIDE_APOSTROPHE_BONUS_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)^\s*(\d+)\s*'\s*/\s*(\d+)\s*(?:m|moves?)\s*(?:\+|&)\s*(\d+)\s*'\s*(?:\+|&)\s*(\d+)\s*''\s*bonus(?:\s*increment)?\s*$",
+    )
+    .expect("valid compact FIDE apostrophe bonus regex")
+});
+
+static FIDE_ADDITIONAL_WORDING_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(
+        r"(?i)^\s*(\d+)\s*{}\s*\+\s*(\d+)\s*{}\s*additional\s*\+\s*(\d+)\s*{}\s*after\s*move\s*40\s*$",
+        MINUTE_UNIT_RE,
+        SECOND_UNIT_RE,
+        MINUTE_UNIT_RE,
+    ))
+    .expect("valid FIDE additional wording regex")
+});
+
+static COMPACT_FIDE_TRIPLE_PLUS_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(
+        r"(?i)^\s*(\d+)\s*\+\s*(\d+)\s*\+\s*(\d+)\s*(?:{}\s*{}|after\s*40\s*moves?)\s*$",
+        SECOND_UNIT_RE, PER_MOVE_RE,
+    ))
+    .expect("valid compact FIDE triple-plus regex")
+});
+
+static TWO_STAGE_SLASH_SHORTHAND_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^\s*(\d+)\s*\+\s*(\d+)\s*/\s*(\d+)\s*\+\s*(\d+)\s*$")
+        .expect("valid two-stage slash shorthand regex")
+});
+
+static FREETEXT_FIDE_STAGE_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(
+        r"(\d+)\s*{}\s*(?:for\s*(\d+)\s*(?:moves?|mv|mvs?)|/\s*(\d+))",
+        MINUTE_UNIT_RE,
+    ))
+    .expect("valid free-text FIDE stage regex")
+});
+
+static FREETEXT_FIDE_REST_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(
+        r"(?:\+|,|then\s+)\s*(\d+)\s*{}\s*(?:for\s*(?:the\s*)?rest|rest)?",
+        MINUTE_UNIT_RE,
+    ))
+    .expect("valid free-text FIDE rest regex")
+});
+
+static FREETEXT_MINUTE_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(r"(\d+)\s*{}\b", MINUTE_UNIT_RE,))
+        .expect("valid free-text minute regex")
+});
+
+static FREETEXT_SECOND_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(r"(\d+)\s*{}\b", SECOND_UNIT_RE,))
+        .expect("valid free-text second regex")
+});
+
+static FREETEXT_INC_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(&format!(
+        r"(\d+)\s*{}\s*(?:(?:added\s+)?{})",
+        SECOND_UNIT_RE, PER_MOVE_RE,
+    ))
+    .expect("valid free-text increment regex")
+});
 
 pub struct ChessTimecontrolNormalizeScalar;
 
@@ -254,8 +373,7 @@ pub fn parse_timecontrol(raw: &str) -> Result<ParsedTimeControl, TimeControlErro
 }
 
 fn strip_trailing_qualifier_suffix(input: &str) -> Option<String> {
-    let qualifier_re = regex::Regex::new(r"^(.*?)\s+([\p{L}]+)$").ok()?;
-    let caps = qualifier_re.captures(input)?;
+    let caps = TRAILING_QUALIFIER_SUFFIX_RE.captures(input)?;
     let core = caps.get(1)?.as_str().trim();
     let suffix = caps.get(2)?.as_str().trim();
 
@@ -636,12 +754,7 @@ fn try_g_prefix_shorthand(
         candidate = candidate.replace("++", "+");
     }
 
-    let g_numeric_re = regex::Regex::new(
-        r"^(\d+)\s*(?:\+\s*(\d+)\s*(?:inc|(?:seconds?|secs?|sec\.?|s\.?|sek)\s*(?:(?:added\s+)?per\s*move|/move|/mv|/m)?)?)?$",
-    )
-    .ok()?;
-
-    if let Some(caps) = g_numeric_re.captures(candidate.trim()) {
+    if let Some(caps) = G_PREFIX_NUMERIC_RE.captures(candidate.trim()) {
         let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
         let increment = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok());
 
@@ -692,9 +805,7 @@ fn try_apostrophe_per_move_shorthand(
     input: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Result<ParsedTimeControl, TimeControlError>> {
-    let re =
-        regex::Regex::new(r"(?i)^\s*(\d+)\s*'\s*\+\s*(\d+)\s*''\s*/\s*(?:m|mv|move)\b.*$").ok()?;
-    let caps = re.captures(input)?;
+    let caps = APOSTROPHE_PER_MOVE_SHORTHAND_RE.captures(input)?;
     let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let inc_secs = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
 
@@ -715,11 +826,7 @@ fn try_compact_minute_second_increment(
     input: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Result<ParsedTimeControl, TimeControlError>> {
-    let re = regex::Regex::new(
-        r"(?i)^\s*(?:[\p{L}\s]+:\s*)?(\d+)\s*(?:minutes?|mins?|mns?|m\.?)?\s*\+\s*(\d+)\s*(?:seconds?|secs?|sec|s|ss|secss)\b(?:\s*(?:increment|inc|incr|added|additional))?(?:\s*(?:(?:from\s*move\s*\w+)|(?:per\s*move)|/move|/mv|/m))?\s*$",
-    )
-    .ok()?;
-    let caps = re.captures(input)?;
+    let caps = COMPACT_MINUTE_SECOND_INCREMENT_RE.captures(input)?;
     let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let inc_secs = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
 
@@ -740,11 +847,7 @@ fn try_clock_style_increment(
     input: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Result<ParsedTimeControl, TimeControlError>> {
-    let re = regex::Regex::new(
-        r"(?i)^\s*(\d+)\s*:\s*([0-5]?\d)(?:\.\d+)?\s*\+\s*(\d+)\s*(?:seconds?|secs?|sec|s)\b(?:\s*(?:increment|inc|incr|added|additional))?(?:\s*(?:(?:from\s*move\s*\w+)|(?:per\s*move)|/move|/mv|/m))?\s*$",
-    )
-    .ok()?;
-    let caps = re.captures(input)?;
+    let caps = CLOCK_STYLE_INCREMENT_RE.captures(input)?;
 
     let hours = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let minutes = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
@@ -776,24 +879,12 @@ fn try_compact_fide_apostrophe_shorthand(
     input: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Result<ParsedTimeControl, TimeControlError>> {
-    let with_move_re = regex::Regex::new(
-        r"(?i)^\s*(\d+)\s*'\s*/\s*(\d+)\s*(?:m|moves?)?\s*(?:\+|&)\s*(\d+)\s*'\s*/\s*(?:g|end)\s*(?:\+|&)\s*(\d+)\s*(?:''?)?\s*/\s*(?:m|mv|move)\b.*$",
-    )
-    .ok()?;
-    let g_compact_re = regex::Regex::new(
-        r"(?i)^\s*(\d+)\s*'\s*/\s*(\d+)\s*(?:m|moves?)?\s*(?:\+|&)\s*(\d+)\s*'\s*/\s*(?:g|end)\s*(?:\+|&)\s*(\d+)\s*''\s*$",
-    )
-    .ok()?;
-    let bonus_re = regex::Regex::new(
-        r"(?i)^\s*(\d+)\s*'\s*/\s*(\d+)\s*(?:m|moves?)\s*(?:\+|&)\s*(\d+)\s*'\s*(?:\+|&)\s*(\d+)\s*''\s*bonus(?:\s*increment)?\s*$",
-    )
-    .ok()?;
-
-    let (caps, warning_code) = if let Some(c) = with_move_re.captures(input) {
+    let (caps, warning_code) = if let Some(c) = COMPACT_FIDE_APOSTROPHE_WITH_MOVE_RE.captures(input)
+    {
         (c, "interpreted_compact_fide_apostrophe")
-    } else if let Some(c) = g_compact_re.captures(input) {
+    } else if let Some(c) = COMPACT_FIDE_APOSTROPHE_G_COMPACT_RE.captures(input) {
         (c, "interpreted_compact_fide_apostrophe")
-    } else if let Some(c) = bonus_re.captures(input) {
+    } else if let Some(c) = COMPACT_FIDE_APOSTROPHE_BONUS_RE.captures(input) {
         (c, "interpreted_compact_fide_bonus_wording")
     } else {
         return None;
@@ -825,11 +916,7 @@ fn try_fide_additional_wording(
     input: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Result<ParsedTimeControl, TimeControlError>> {
-    let re = regex::Regex::new(
-        r"(?i)^\s*(\d+)\s*(?:minutes?|mins?|m)\s*\+\s*(\d+)\s*(?:seconds?|secs?|sec|s)\s*additional\s*\+\s*(\d+)\s*(?:minutes?|mins?|m)\s*after\s*move\s*40\s*$",
-    )
-    .ok()?;
-    let caps = re.captures(input)?;
+    let caps = FIDE_ADDITIONAL_WORDING_RE.captures(input)?;
 
     let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let inc_secs = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
@@ -859,17 +946,7 @@ fn try_compact_fide_triple_plus(
     input: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Result<ParsedTimeControl, TimeControlError>> {
-    let per_move_re = regex::Regex::new(
-        r"(?i)^\s*(\d+)\s*\+\s*(\d+)\s*\+\s*(\d+)\s*(?:seconds?|secs?|sec|s)\s*(?:per\s*move|/move|/mv|/m)\s*$",
-    )
-    .ok()?;
-    let after_move_re =
-        regex::Regex::new(r"(?i)^\s*(\d+)\s*\+\s*(\d+)\s*\+\s*(\d+)\s*after\s*40\s*moves?\s*$")
-            .ok()?;
-
-    let caps = per_move_re
-        .captures(input)
-        .or_else(|| after_move_re.captures(input))?;
+    let caps = COMPACT_FIDE_TRIPLE_PLUS_RE.captures(input)?;
 
     let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let rest_mins = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
@@ -899,8 +976,7 @@ fn try_two_stage_slash_shorthand(
     input: &str,
     warnings: &mut Vec<String>,
 ) -> Option<Result<ParsedTimeControl, TimeControlError>> {
-    let re = regex::Regex::new(r"^\s*(\d+)\s*\+\s*(\d+)\s*/\s*(\d+)\s*\+\s*(\d+)\s*$").ok()?;
-    let caps = re.captures(input)?;
+    let caps = TWO_STAGE_SLASH_SHORTHAND_RE.captures(input)?;
 
     let first_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let first_inc = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
@@ -1011,39 +1087,21 @@ fn try_free_text_templates(
 ) -> Option<Result<ParsedTimeControl, TimeControlError>> {
     let lower = input.to_lowercase();
 
-    let fide_stage_for_re = regex::Regex::new(
-        r"(\d+)\s*(?:minutes?|min(?:utes?)?|min\.)\s*for\s*(\d+)\s*(?:moves?|mv|mvs?)",
-    )
-    .ok()?;
-    let fide_stage_slash_re =
-        regex::Regex::new(r"(\d+)\s*(?:minutes?|min(?:utes?)?|min\.)\s*/\s*(\d+)").ok()?;
-    let fide_rest_re = regex::Regex::new(
-        r"(?:\+|,|then\s+)\s*(\d+)\s*(?:minutes?|min(?:utes?)?|min\.)\s*(?:for\s*(?:the\s*)?rest|rest)?",
-    )
-    .ok()?;
-    let fide_inc_re = regex::Regex::new(
-        r"(\d+)\s*(?:seconds?|secs?|sec\.?|s\.?|sek)\s*(?:(?:added\s+)?per\s*move|/move|/mv|/m)",
-    )
-    .ok()?;
-
-    let stage_caps = fide_stage_for_re
-        .captures(&lower)
-        .or_else(|| fide_stage_slash_re.captures(&lower));
+    let stage_caps = FREETEXT_FIDE_STAGE_RE.captures(&lower);
 
     if let Some(stage_caps) = stage_caps
-        && let (Some(base_mins), Some(moves)) = (
-            stage_caps
-                .get(1)
-                .and_then(|m| m.as_str().parse::<u32>().ok()),
-            stage_caps
-                .get(2)
-                .and_then(|m| m.as_str().parse::<u32>().ok()),
-        )
-        && let Some(rest_caps) = fide_rest_re.captures(&lower)
+        && let Some(base_mins) = stage_caps
+            .get(1)
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+        && let Some(moves) = stage_caps
+            .get(2)
+            .or_else(|| stage_caps.get(3))
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+        && let Some(rest_caps) = FREETEXT_FIDE_REST_RE.captures(&lower)
         && let Some(rest_mins) = rest_caps
             .get(1)
             .and_then(|m| m.as_str().parse::<u32>().ok())
-        && let Some(inc_caps) = fide_inc_re.captures(&lower)
+        && let Some(inc_caps) = FREETEXT_INC_RE.captures(&lower)
         && let Some(inc_secs) = inc_caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())
     {
         let first_base = base_mins * 60;
@@ -1082,33 +1140,26 @@ fn try_free_text_templates(
         || lower.contains("sek")
         || lower.contains("sec")
     {
-        let minute_re = regex::Regex::new(r"(\d+)\s*(?:minutes?|min(?:utes?)?|min\.)\b").ok()?;
-        let second_re = regex::Regex::new(r"(\d+)\s*(?:seconds?|secs?|sek)\b").ok()?;
-        let inc_re = regex::Regex::new(
-            r"(\d+)\s*(?:seconds?|secs?|sec\.?|s\.?|sek)\s*(?:(?:added\s+)?per\s*move|/move|/mv|/m)",
-        )
-        .ok()?;
-
         let mut minutes: Option<u32> = None;
         let mut seconds: Option<u32> = None;
         let mut inc: Option<u32> = None;
 
         let mut template_text = lower.clone();
 
-        if let Some(inc_cap) = inc_re.captures(&lower)
+        if let Some(inc_cap) = FREETEXT_INC_RE.captures(&lower)
             && let Some(m) = inc_cap.get(1)
         {
             inc = m.as_str().parse().ok();
-            template_text = inc_re.replace_all(&lower, " ").to_string();
+            template_text = FREETEXT_INC_RE.replace_all(&lower, " ").to_string();
         }
 
-        for cap in minute_re.captures_iter(&template_text) {
+        for cap in FREETEXT_MINUTE_RE.captures_iter(&template_text) {
             if let Some(m) = cap.get(1) {
                 minutes = m.as_str().parse().ok();
             }
         }
 
-        for cap in second_re.captures_iter(&template_text) {
+        for cap in FREETEXT_SECOND_RE.captures_iter(&template_text) {
             if let Some(m) = cap.get(1) {
                 seconds = m.as_str().parse().ok();
             }
