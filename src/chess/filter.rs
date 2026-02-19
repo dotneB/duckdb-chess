@@ -14,6 +14,8 @@ use std::ops::ControlFlow;
 
 use pgn_reader::{Nag, Outcome, RawComment, Reader, SanPlus, Skip, Visitor};
 
+use crate::pgn_visitor_skip_variations;
+
 type MoveList = SmallVec<[String; 128]>;
 
 /// Normalize chess movetext by removing comments {}, variations (), and NAGs ($n, !, ?, etc.)
@@ -114,32 +116,7 @@ impl Visitor for NormalizeSerializeVisitor {
         ControlFlow::Continue(())
     }
 
-    fn nag(&mut self, _movetext: &mut Self::Movetext, _nag: Nag) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn partial_comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn begin_variation(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-    ) -> ControlFlow<Self::Output, Skip> {
-        ControlFlow::Continue(Skip(true))
-    }
+    pgn_visitor_skip_variations!();
 
     fn outcome(
         &mut self,
@@ -190,32 +167,7 @@ impl Visitor for NormalizeVisitor {
         ControlFlow::Continue(())
     }
 
-    fn nag(&mut self, _movetext: &mut Self::Movetext, _nag: Nag) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn partial_comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn begin_variation(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-    ) -> ControlFlow<Self::Output, Skip> {
-        ControlFlow::Continue(Skip(true))
-    }
+    pgn_visitor_skip_variations!();
 
     fn outcome(
         &mut self,

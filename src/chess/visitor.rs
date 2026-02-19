@@ -4,10 +4,43 @@ use libduckdb_sys::duckdb_create_time_tz;
 use libduckdb_sys::{duckdb_date, duckdb_time_tz};
 
 use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
+use pgn_reader::{Outcome, RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
+use std::fmt::Write;
+use std::io::Read;
 use std::mem;
+use std::ops::ControlFlow;
 use std::sync::LazyLock;
 
 static EPOCH: LazyLock<NaiveDate> = LazyLock::new(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
+
+#[macro_export]
+macro_rules! pgn_visitor_skip_variations {
+    () => {
+        fn nag(&mut self, _: &mut Self::Movetext, _: Nag) -> ControlFlow<Self::Output> {
+            ControlFlow::Continue(())
+        }
+
+        fn comment(
+            &mut self,
+            _: &mut Self::Movetext,
+            _: RawComment<'_>,
+        ) -> ControlFlow<Self::Output> {
+            ControlFlow::Continue(())
+        }
+
+        fn partial_comment(
+            &mut self,
+            _: &mut Self::Movetext,
+            _: RawComment<'_>,
+        ) -> ControlFlow<Self::Output> {
+            ControlFlow::Continue(())
+        }
+
+        fn begin_variation(&mut self, _: &mut Self::Movetext) -> ControlFlow<Self::Output, Skip> {
+            ControlFlow::Continue(Skip(true))
+        }
+    };
+}
 
 #[cfg(not(test))]
 #[inline]
@@ -15,10 +48,6 @@ fn create_time_tz(micros: i64, offset_seconds: i32) -> duckdb_time_tz {
     // SAFETY: Only called inside DuckDB (API initialized).
     unsafe { duckdb_create_time_tz(micros, offset_seconds) }
 }
-use pgn_reader::{Outcome, RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
-use std::fmt::Write;
-use std::io::Read;
-use std::ops::ControlFlow;
 
 /// Streaming PGN visitor (pgn-reader).
 /// Spec: pgn-parsing - Visitor Pattern Implementation

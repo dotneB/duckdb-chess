@@ -16,6 +16,7 @@ use std::ops::ControlFlow;
 
 use crate::chess::duckdb_string::decode_duckdb_string;
 use crate::chess::filter::parse_movetext_mainline;
+use crate::pgn_visitor_skip_variations;
 
 type MoveList = SmallVec<[String; 128]>;
 
@@ -197,32 +198,7 @@ impl Visitor for MovesJsonVisitor {
         ControlFlow::Continue(())
     }
 
-    fn nag(&mut self, _movetext: &mut Self::Movetext, _nag: Nag) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn partial_comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn begin_variation(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-    ) -> ControlFlow<Self::Output, Skip> {
-        ControlFlow::Continue(Skip(true))
-    }
+    pgn_visitor_skip_variations!();
 
     fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {}
 }
@@ -373,32 +349,7 @@ impl Visitor for PlyCountVisitor {
         ControlFlow::Continue(())
     }
 
-    fn nag(&mut self, _movetext: &mut Self::Movetext, _nag: Nag) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn partial_comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> ControlFlow<Self::Output> {
-        ControlFlow::Continue(())
-    }
-
-    fn begin_variation(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-    ) -> ControlFlow<Self::Output, Skip> {
-        ControlFlow::Continue(Skip(true))
-    }
+    pgn_visitor_skip_variations!();
 
     fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {}
 }
@@ -429,64 +380,32 @@ impl Visitor for ZobristHashVisitor {
     type Movetext = ();
     type Output = ();
 
-    fn begin_tags(&mut self) -> std::ops::ControlFlow<Self::Output, Self::Tags> {
+    fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
         self.init();
-        std::ops::ControlFlow::Continue(())
+        ControlFlow::Continue(())
     }
 
-    fn begin_movetext(
-        &mut self,
-        _tags: Self::Tags,
-    ) -> std::ops::ControlFlow<Self::Output, Self::Movetext> {
-        std::ops::ControlFlow::Continue(())
+    fn begin_movetext(&mut self, _tags: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        ControlFlow::Continue(())
     }
 
     fn san(
         &mut self,
         _movetext: &mut Self::Movetext,
         san_plus: PgnSanPlus,
-    ) -> std::ops::ControlFlow<Self::Output> {
+    ) -> ControlFlow<Self::Output> {
         let m = match san_plus.san.to_move(&self.pos) {
             Ok(m) => m,
-            Err(_) => return std::ops::ControlFlow::Break(()),
+            Err(_) => return ControlFlow::Break(()),
         };
 
         self.pos.play_unchecked(m);
         self.hash = zobrist_hash_of_position(&self.pos);
 
-        std::ops::ControlFlow::Continue(())
+        ControlFlow::Continue(())
     }
 
-    fn nag(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _nag: Nag,
-    ) -> std::ops::ControlFlow<Self::Output> {
-        std::ops::ControlFlow::Continue(())
-    }
-
-    fn comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> std::ops::ControlFlow<Self::Output> {
-        std::ops::ControlFlow::Continue(())
-    }
-
-    fn partial_comment(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-        _comment: RawComment<'_>,
-    ) -> std::ops::ControlFlow<Self::Output> {
-        std::ops::ControlFlow::Continue(())
-    }
-
-    fn begin_variation(
-        &mut self,
-        _movetext: &mut Self::Movetext,
-    ) -> std::ops::ControlFlow<Self::Output, Skip> {
-        std::ops::ControlFlow::Continue(Skip(true))
-    }
+    pgn_visitor_skip_variations!();
 
     fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {}
 }
