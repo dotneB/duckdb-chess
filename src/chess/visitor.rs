@@ -4,6 +4,9 @@ use libduckdb_sys::duckdb_create_time_tz;
 use libduckdb_sys::{duckdb_date, duckdb_time_tz};
 
 use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
+use std::sync::LazyLock;
+
+static EPOCH: LazyLock<NaiveDate> = LazyLock::new(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
 
 #[cfg(not(test))]
 #[inline]
@@ -317,19 +320,7 @@ impl GameVisitor {
             return None;
         }
 
-        let epoch = match NaiveDate::from_ymd_opt(1970, 1, 1) {
-            Some(v) => v,
-            None => {
-                // Should never happen.
-                Self::push_error(
-                    parse_error,
-                    "Conversion error: failed to create epoch".into(),
-                );
-                return None;
-            }
-        };
-
-        let days_i64 = date.signed_duration_since(epoch).num_days();
+        let days_i64 = date.signed_duration_since(*EPOCH).num_days();
         let days: i32 = match i32::try_from(days_i64) {
             Ok(v) => v,
             Err(_) => {
