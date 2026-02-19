@@ -1,18 +1,24 @@
-use super::visitor::{PgnReaderState, SharedState};
+use super::visitor::{PgnInput, PgnReaderState, SharedState};
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
 };
-use libduckdb_sys::{duckdb_date, duckdb_time_tz};
+use libduckdb_sys::{
+    duckdb_bind_get_named_parameter, duckdb_bind_info, duckdb_date, duckdb_destroy_value,
+    duckdb_free, duckdb_get_varchar, duckdb_is_null_value, duckdb_time_tz,
+};
 use std::borrow::Cow;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs::File;
+use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use zstd::stream::read::Decoder as ZstdDecoder;
 
 #[repr(C)]
 pub struct ReadPgnBindData {
     paths: Vec<PathBuf>,
+    compression: CompressionMode,
 }
 
 #[repr(C)]
@@ -21,6 +27,112 @@ pub struct ReadPgnInitData {
 }
 
 pub struct ReadPgnVTab;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompressionMode {
+    Plain,
+    Zstd,
+}
+
+impl CompressionMode {
+    fn parse(raw: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let normalized = raw.trim();
+        if normalized.is_empty() {
+            return Err(
+                "Invalid compression value ''. Supported values: 'zstd' or NULL/omitted."
+                    .to_string()
+                    .into(),
+            );
+        }
+
+        if normalized.eq_ignore_ascii_case("zstd") {
+            Ok(Self::Zstd)
+        } else {
+            Err(format!(
+                "Invalid compression value '{}'. Supported values: 'zstd' or NULL/omitted.",
+                normalized
+            )
+            .into())
+        }
+    }
+}
+
+fn resolve_compression_mode(
+    bind: &BindInfo,
+) -> Result<CompressionMode, Box<dyn std::error::Error>> {
+    match get_named_parameter_varchar(bind, "compression")? {
+        None | Some(None) => Ok(CompressionMode::Plain),
+        Some(Some(raw)) => {
+            let normalized = raw.trim();
+            if normalized.eq_ignore_ascii_case("null") {
+                Ok(CompressionMode::Plain)
+            } else {
+                CompressionMode::parse(normalized)
+            }
+        }
+    }
+}
+
+fn bind_info_ptr(bind: &BindInfo) -> duckdb_bind_info {
+    // SAFETY: `duckdb::vtab::BindInfo` is a thin wrapper around `duckdb_bind_info`
+    // in duckdb-rs 1.4.4. We only read the wrapped pointer for C API interop.
+    unsafe { *(bind as *const BindInfo as *const duckdb_bind_info) }
+}
+
+fn get_named_parameter_varchar(
+    bind: &BindInfo,
+    name: &str,
+) -> Result<Option<Option<String>>, Box<dyn std::error::Error>> {
+    let name_cstr = CString::new(name)?;
+
+    // SAFETY: `bind_info_ptr` returns the C bind pointer owned by DuckDB for this bind call.
+    let mut value =
+        unsafe { duckdb_bind_get_named_parameter(bind_info_ptr(bind), name_cstr.as_ptr()) };
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    // SAFETY: `value` is a valid duckdb_value returned by DuckDB and must be destroyed once.
+    let result = unsafe {
+        if duckdb_is_null_value(value) {
+            Ok(Some(None))
+        } else {
+            let varchar = duckdb_get_varchar(value);
+            if varchar.is_null() {
+                Err(format!("Failed to read named parameter '{}' as VARCHAR", name).into())
+            } else {
+                let text = CStr::from_ptr(varchar).to_string_lossy().into_owned();
+                duckdb_free(varchar as *mut c_void);
+                Ok(Some(Some(text)))
+            }
+        }
+    };
+
+    // SAFETY: `value` has not been destroyed yet and must be released now.
+    unsafe {
+        duckdb_destroy_value(&mut value);
+    }
+
+    result
+}
+
+fn open_input_stream(path: &PathBuf, compression: CompressionMode) -> Result<PgnInput, String> {
+    let file =
+        File::open(path).map_err(|e| format!("Failed to open file '{}': {}", path.display(), e))?;
+
+    match compression {
+        CompressionMode::Plain => Ok(Box::new(file)),
+        CompressionMode::Zstd => ZstdDecoder::new(file)
+            .map(|decoder| Box::new(decoder) as PgnInput)
+            .map_err(|e| {
+                format!(
+                    "Failed to initialize zstd decoder for '{}': {}",
+                    path.display(),
+                    e
+                )
+            }),
+    }
+}
 
 fn append_parse_error(parse_error: &mut Option<String>, message: String) {
     match parse_error {
@@ -75,6 +187,7 @@ impl VTab for ReadPgnVTab {
 
     fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
         let pattern = bind.get_parameter(0).to_string();
+        let compression = resolve_compression_mode(bind)?;
 
         // Spec: pgn-parsing - PGN File Reading
         // Expand glob pattern to get list of files (single file or glob pattern)
@@ -128,7 +241,7 @@ impl VTab for ReadPgnVTab {
 
         bind.add_result_column("Source", LogicalTypeHandle::from(LogicalTypeId::Varchar));
 
-        Ok(ReadPgnBindData { paths })
+        Ok(ReadPgnBindData { paths, compression })
     }
 
     fn init(_: &InitInfo) -> Result<Self::InitData, Box<dyn std::error::Error>> {
@@ -184,13 +297,12 @@ impl VTab for ReadPgnVTab {
                     drop(state);
 
                     let path = &bind_data.paths[path_idx];
-                    match File::open(path) {
-                        Ok(file) => {
-                            current_reader_state = Some(PgnReaderState::new(file, path_idx));
+                    match open_input_stream(path, bind_data.compression) {
+                        Ok(input_stream) => {
+                            current_reader_state =
+                                Some(PgnReaderState::new(input_stream, path_idx));
                         }
-                        Err(e) => {
-                            let err_msg =
-                                format!("Failed to open file '{}': {}", path.display(), e);
+                        Err(err_msg) => {
                             // If we only have one path (likely explicit single file), fail hard.
                             // If we have multiple (glob result), warn and skip.
                             if bind_data.paths.len() == 1 {
@@ -210,7 +322,8 @@ impl VTab for ReadPgnVTab {
             // Process using current reader
             if let Some(mut reader) = current_reader_state.take() {
                 // Use pgn-reader's Reader directly for streaming PGN parsing.
-                // Note: We do NOT wrap File in BufReader because pgn-reader's documentation states:
+                // Note: For plain files we do NOT add an extra BufReader layer because
+                // pgn-reader's documentation states:
                 // "Buffers the underlying reader with an appropriate strategy, so it's not
                 // recommended to add an additional layer of buffering like BufReader."
                 let game_index = reader.next_game_index;
@@ -397,11 +510,16 @@ impl VTab for ReadPgnVTab {
     }
 
     fn parameters() -> Option<Vec<LogicalTypeHandle>> {
-        // Only declare first parameter as required
-        // Additional parameters can still be passed and will be detected via get_parameter_count()
         Some(vec![
             LogicalTypeHandle::from(LogicalTypeId::Varchar), // path pattern (required)
         ])
+    }
+
+    fn named_parameters() -> Option<Vec<(String, LogicalTypeHandle)>> {
+        Some(vec![(
+            "compression".to_string(),
+            LogicalTypeHandle::from(LogicalTypeId::Varchar),
+        )])
     }
 }
 
@@ -426,16 +544,23 @@ mod tests {
     fn test_read_pgn_bind_data_creation() {
         // Test that bind data can be created with single file
         let paths = vec![PathBuf::from("test.pgn")];
-        let bind_data = ReadPgnBindData { paths };
+        let bind_data = ReadPgnBindData {
+            paths,
+            compression: CompressionMode::Plain,
+        };
         assert_eq!(bind_data.paths.len(), 1);
         assert_eq!(bind_data.paths[0], PathBuf::from("test.pgn"));
+        assert_eq!(bind_data.compression, CompressionMode::Plain);
     }
 
     #[test]
     fn test_read_pgn_bind_data_multiple_files() {
         // Test that bind data can be created with multiple files
         let paths = vec![PathBuf::from("test1.pgn"), PathBuf::from("test2.pgn")];
-        let bind_data = ReadPgnBindData { paths };
+        let bind_data = ReadPgnBindData {
+            paths,
+            compression: CompressionMode::Plain,
+        };
         assert_eq!(bind_data.paths.len(), 2);
     }
 
@@ -469,6 +594,30 @@ mod tests {
 
         let message = parse_error.expect("expected parse_error message");
         assert!(message.contains("Sanitized interior NUL in Event"));
+    }
+
+    #[test]
+    fn test_parse_compression_mode_zstd_case_insensitive() {
+        assert_eq!(
+            CompressionMode::parse("zstd").unwrap(),
+            CompressionMode::Zstd
+        );
+        assert_eq!(
+            CompressionMode::parse("ZsTd").unwrap(),
+            CompressionMode::Zstd
+        );
+    }
+
+    #[test]
+    fn test_parse_compression_mode_rejects_empty_value() {
+        let err = CompressionMode::parse("   ").unwrap_err().to_string();
+        assert!(err.contains("Invalid compression value"));
+    }
+
+    #[test]
+    fn test_parse_compression_mode_rejects_unsupported_value() {
+        let err = CompressionMode::parse("gzip").unwrap_err().to_string();
+        assert!(err.contains("Invalid compression value 'gzip'"));
     }
 
     // Test with actual PGN file content parsing

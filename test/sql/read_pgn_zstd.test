@@ -1,0 +1,57 @@
+# name: test/sql/read_pgn_zstd.test
+# description: Test read_pgn zstd compression support
+# group: [read_pgn]
+
+require chess
+
+# Read zstd-compressed PGN with named compression argument
+query I
+SELECT COUNT(*)
+FROM read_pgn('test/pgn_files/sample.pgn.zst', compression := 'zstd');
+----
+10
+
+# Compression mode is case-insensitive
+query I
+SELECT COUNT(*)
+FROM read_pgn('test/pgn_files/sample.pgn.zst', compression := 'ZsTd');
+----
+10
+
+# Explicit NULL compression behaves like omitted compression on plain PGN input
+query I
+SELECT COUNT(*)
+FROM read_pgn('test/pgn_files/sample.pgn', compression := NULL);
+----
+10
+
+# Row parity check on representative filtered query
+query II
+SELECT White, Opening
+FROM read_pgn('test/pgn_files/sample.pgn.zst', compression := 'zstd')
+WHERE Opening LIKE '%Defense%'
+ORDER BY White;
+----
+GrandMaster99	Philidor Defense
+IMPlayer	Indian Defense
+LightningFast	French Defense
+RookRoller	Caro-Kann Defense
+SpeedDemon	King's Indian Defense
+TacticalKing	Sicilian Defense
+
+# Unsupported compression value is rejected
+statement error Invalid compression value
+SELECT COUNT(*)
+FROM read_pgn('test/pgn_files/sample.pgn', compression := 'gzip');
+
+# Empty compression value is rejected
+statement error Invalid compression value
+SELECT COUNT(*)
+FROM read_pgn('test/pgn_files/sample.pgn', compression := '');
+
+# Glob over multiple zstd-compressed files
+query III
+SELECT COUNT(*), MIN(Event), MAX(Event)
+FROM read_pgn('test/pgn_files/game*.pgn.zst', compression := 'zstd');
+----
+2	Test Game 1	Test Game 2

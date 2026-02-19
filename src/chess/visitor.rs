@@ -13,7 +13,7 @@ fn create_time_tz(micros: i64, offset_seconds: i32) -> duckdb_time_tz {
 }
 use pgn_reader::{Outcome, RawComment, RawTag, Reader, SanPlus, Skip, Visitor};
 use std::fmt::Write;
-use std::fs::File;
+use std::io::Read;
 use std::ops::ControlFlow;
 
 /// Streaming PGN visitor (pgn-reader).
@@ -530,8 +530,10 @@ impl GameVisitor {
     }
 }
 
+pub type PgnInput = Box<dyn Read + Send>;
+
 pub struct PgnReaderState {
-    pub pgn_reader: Reader<File>,
+    pub pgn_reader: Reader<PgnInput>,
     pub path_idx: usize,
     pub next_game_index: usize,
     pub record_buffer: GameRecord,
@@ -539,9 +541,9 @@ pub struct PgnReaderState {
 }
 
 impl PgnReaderState {
-    pub fn new(file: File, path_idx: usize) -> Self {
+    pub fn new(input: PgnInput, path_idx: usize) -> Self {
         Self {
-            pgn_reader: Reader::new(file),
+            pgn_reader: Reader::new(input),
             path_idx,
             next_game_index: 1,
             record_buffer: GameRecord::default(),

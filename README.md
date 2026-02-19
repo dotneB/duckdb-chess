@@ -21,6 +21,9 @@ SELECT Event, White, Black, Result, Termination, TimeControl FROM read_pgn('test
 -- Read multiple pgn files
 SELECT COUNT(*) FROM read_pgn('test/pgn_files/*.pgn');
 
+-- Read zstd-compressed pgn files
+SELECT COUNT(*) FROM read_pgn('test/pgn_files/sample.pgn.zst', compression := 'zstd');
+
 -- How many games started with 1. e4 e5
 SELECT COUNT_IF(chess_moves_subset('1. e4 e5', movetext))  FROM read_pgn('test/pgn_files/sample.pgn');
 
@@ -284,11 +287,15 @@ WHERE rn = 1;
 
 ### Table Functions
 
-#### `read_pgn(path_pattern: VARCHAR)`
+#### `read_pgn(path_pattern: VARCHAR, compression := NULL)`
 
 Reads chess games from one or more PGN files.
 
 `path_pattern` can be a single path or a glob pattern (e.g. `lichess_db_2024-*.pgn`).
+
+`compression` is optional. Supported values:
+- `NULL` or omitted: plain PGN input (default)
+- `'zstd'`: zstd-compressed PGN input streams (e.g. `.pgn.zst`)
 
 Returned columns:
 
