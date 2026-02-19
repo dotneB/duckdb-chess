@@ -5,6 +5,7 @@ use duckdb::{
     vtab::arrow::WritableVector,
 };
 use libduckdb_sys::duckdb_string_t;
+use smallvec::SmallVec;
 use std::error::Error;
 use std::ffi::CString;
 use std::fmt::Write;
@@ -12,6 +13,8 @@ use std::io;
 use std::ops::ControlFlow;
 
 use pgn_reader::{Nag, Outcome, RawComment, Reader, SanPlus, Skip, Visitor};
+
+type MoveList = SmallVec<[String; 128]>;
 
 /// Normalize chess movetext by removing comments {}, variations (), and NAGs ($n, !, ?, etc.)
 /// Returns a canonical string representation with standardized spacing.
@@ -31,7 +34,7 @@ pub fn normalize_movetext(movetext: &str) -> String {
 }
 
 pub(crate) struct ParsedMovetext {
-    pub sans: Vec<String>,
+    pub sans: MoveList,
     pub outcome: Option<String>,
     pub parse_error: bool,
 }
@@ -39,7 +42,7 @@ pub(crate) struct ParsedMovetext {
 pub(crate) fn parse_movetext_mainline(movetext: &str) -> ParsedMovetext {
     if movetext.trim().is_empty() {
         return ParsedMovetext {
-            sans: Vec::new(),
+            sans: MoveList::new(),
             outcome: None,
             parse_error: false,
         };
@@ -159,7 +162,7 @@ impl Visitor for NormalizeSerializeVisitor {
 
 #[derive(Default)]
 struct NormalizeVisitor {
-    sans: Vec<String>,
+    sans: MoveList,
     outcome: Option<String>,
 }
 

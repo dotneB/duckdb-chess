@@ -378,6 +378,7 @@ dependencies = [
  "regex",
  "serde_json",
  "shakmaty",
+ "smallvec",
  "zstd",
 ]
 

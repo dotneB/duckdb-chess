@@ -7,6 +7,7 @@ use duckdb::{
 use libduckdb_sys::duckdb_string_t;
 use pgn_reader::{Nag, RawComment, Reader, SanPlus as PgnSanPlus, Skip, Visitor};
 use shakmaty::{Chess, EnPassantMode, Position, fen::Fen, san::SanPlus, zobrist::Zobrist64};
+use smallvec::SmallVec;
 use std::error::Error;
 use std::ffi::CString;
 use std::fmt::Write;
@@ -15,6 +16,8 @@ use std::ops::ControlFlow;
 
 use crate::chess::duckdb_string::decode_duckdb_string;
 use crate::chess::filter::parse_movetext_mainline;
+
+type MoveList = SmallVec<[String; 128]>;
 
 pub struct ChessMovesJsonScalar;
 
@@ -692,14 +695,14 @@ fn looks_like_san_token(token: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, 'x' | '+' | '#' | '=' | '-'))
 }
 
-fn extract_clean_mainline_sans(movetext: &str) -> Option<Vec<String>> {
+fn extract_clean_mainline_sans(movetext: &str) -> Option<MoveList> {
     if movetext.trim().is_empty() {
-        return Some(Vec::new());
+        return Some(MoveList::new());
     }
 
     let mut saw_result = false;
     let mut position = Chess::default();
-    let mut sans = Vec::new();
+    let mut sans = MoveList::new();
 
     for token in movetext.split_whitespace() {
         if saw_result {
