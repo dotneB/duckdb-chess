@@ -1,10 +1,13 @@
 mod duckdb_string;
+mod error;
 mod filter;
 mod moves;
 mod reader;
 mod timecontrol;
 mod types;
 mod visitor;
+
+pub use error::ErrorAccumulator;
 
 use duckdb::{Connection, Result};
 use duckdb_ext_macros::duckdb_extension;

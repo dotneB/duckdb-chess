@@ -1,4 +1,5 @@
 use super::types::GameRecord;
+use crate::chess::ErrorAccumulator;
 #[cfg(not(test))]
 use libduckdb_sys::duckdb_create_time_tz;
 use libduckdb_sys::{duckdb_date, duckdb_time_tz};
@@ -60,6 +61,7 @@ pub struct GameVisitor {
     movetext_buffer: String,
     move_count: u32,
     result_marker: Option<String>,
+    parse_error: ErrorAccumulator,
     pub current_game: Option<GameRecord>,
 }
 
@@ -136,19 +138,8 @@ impl GameVisitor {
             movetext_buffer: String::new(),
             move_count: 0,
             result_marker: None,
+            parse_error: ErrorAccumulator::default(),
             current_game: None,
-        }
-    }
-
-    fn push_error(parse_error: &mut Option<String>, msg: String) {
-        match parse_error {
-            Some(existing) => {
-                existing.push_str("; ");
-                existing.push_str(&msg);
-            }
-            None => {
-                *parse_error = Some(msg);
-            }
         }
     }
 
@@ -238,7 +229,7 @@ impl GameVisitor {
         utc_date: Option<&str>,
         date: Option<&str>,
         event_date: Option<&str>,
-        parse_error: &mut Option<String>,
+        parse_error: &mut ErrorAccumulator,
     ) -> Option<duckdb_date> {
         for (raw, label) in Self::rank_date_candidates(utc_date, date, event_date) {
             if let Some(parsed) = Self::parse_date_field(raw, label, parse_error) {
@@ -252,7 +243,7 @@ impl GameVisitor {
     fn parse_date_field(
         raw: &str,
         label: &str,
-        parse_error: &mut Option<String>,
+        parse_error: &mut ErrorAccumulator,
     ) -> Option<duckdb_date> {
         let s = raw.trim();
         if s.is_empty() {
@@ -265,13 +256,10 @@ impl GameVisitor {
             match NaiveDate::parse_from_str(&norm, "%Y-%m-%d") {
                 Ok(_) => {
                     // Should not happen if split failed, but keep a consistent error message.
-                    Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                    parse_error.push(&format!("Conversion error: {label}='{s}'"));
                 }
                 Err(e) => {
-                    Self::push_error(
-                        parse_error,
-                        format!("Conversion error: {label}='{s}' (chrono: {e})"),
-                    );
+                    parse_error.push(&format!("Conversion error: {label}='{s}' (chrono: {e})"));
                 }
             }
             return None;
@@ -297,39 +285,29 @@ impl GameVisitor {
         let year = match year_s.parse::<i32>() {
             Ok(v) => v,
             Err(e) => {
-                Self::push_error(
-                    parse_error,
-                    format!("Conversion error: {label}='{s}' (chrono: {e})"),
-                );
+                parse_error.push(&format!("Conversion error: {label}='{s}' (chrono: {e})"));
                 return None;
             }
         };
         let month = match month_s.parse::<u32>() {
             Ok(v) => v,
             Err(e) => {
-                Self::push_error(
-                    parse_error,
-                    format!("Conversion error: {label}='{s}' (chrono: {e})"),
-                );
+                parse_error.push(&format!("Conversion error: {label}='{s}' (chrono: {e})"));
                 return None;
             }
         };
         let mut day = match day_s.parse::<u32>() {
             Ok(v) => v,
             Err(e) => {
-                Self::push_error(
-                    parse_error,
-                    format!("Conversion error: {label}='{s}' (chrono: {e})"),
-                );
+                parse_error.push(&format!("Conversion error: {label}='{s}' (chrono: {e})"));
                 return None;
             }
         };
 
         let Some(last_day) = Self::last_day_of_month(year, month) else {
-            Self::push_error(
-                parse_error,
-                format!("Conversion error: {label}='{s}' (chrono: input is out of range)"),
-            );
+            parse_error.push(&format!(
+                "Conversion error: {label}='{s}' (chrono: input is out of range)"
+            ));
             return None;
         };
 
@@ -340,19 +318,17 @@ impl GameVisitor {
         let date = match NaiveDate::from_ymd_opt(year, month, day) {
             Some(v) => v,
             None => {
-                Self::push_error(
-                    parse_error,
-                    format!("Conversion error: {label}='{s}' (chrono: input is out of range)"),
-                );
+                parse_error.push(&format!(
+                    "Conversion error: {label}='{s}' (chrono: input is out of range)"
+                ));
                 return None;
             }
         };
 
         if date.year() <= 0 {
-            Self::push_error(
-                parse_error,
-                format!("Conversion error: {label}='{s}' (chrono: year must be >= 1)"),
-            );
+            parse_error.push(&format!(
+                "Conversion error: {label}='{s}' (chrono: year must be >= 1)"
+            ));
             return None;
         }
 
@@ -360,10 +336,9 @@ impl GameVisitor {
         let days: i32 = match i32::try_from(days_i64) {
             Ok(v) => v,
             Err(_) => {
-                Self::push_error(
-                    parse_error,
-                    format!("Conversion error: {label}='{s}' (chrono: date out of range)"),
-                );
+                parse_error.push(&format!(
+                    "Conversion error: {label}='{s}' (chrono: date out of range)"
+                ));
                 return None;
             }
         };
@@ -374,7 +349,7 @@ impl GameVisitor {
     fn parse_uinteger_field(
         raw: Option<&str>,
         label: &str,
-        parse_error: &mut Option<String>,
+        parse_error: &mut ErrorAccumulator,
     ) -> Option<u32> {
         let s = raw?.trim();
         if s.is_empty() {
@@ -383,7 +358,7 @@ impl GameVisitor {
         match s.parse::<u32>() {
             Ok(v) => Some(v),
             Err(_) => {
-                Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                parse_error.push(&format!("Conversion error: {label}='{s}'"));
                 None
             }
         }
@@ -392,7 +367,7 @@ impl GameVisitor {
     fn parse_time_tz_field(
         raw: &str,
         label: &str,
-        parse_error: &mut Option<String>,
+        parse_error: &mut ErrorAccumulator,
     ) -> Option<duckdb_time_tz> {
         let s = raw.trim();
         if s.is_empty() {
@@ -412,7 +387,7 @@ impl GameVisitor {
                 match Self::parse_tz_offset_seconds(off) {
                     Some(v) => v,
                     None => {
-                        Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                        parse_error.push(&format!("Conversion error: {label}='{s}'"));
                         return None;
                     }
                 },
@@ -423,7 +398,7 @@ impl GameVisitor {
                 match Self::parse_tz_offset_seconds(off) {
                     Some(v) => -v,
                     None => {
-                        Self::push_error(parse_error, format!("Conversion error: {label}='{s}'"));
+                        parse_error.push(&format!("Conversion error: {label}='{s}'"));
                         return None;
                     }
                 },
@@ -435,10 +410,7 @@ impl GameVisitor {
         let time = match NaiveTime::parse_from_str(time_part, "%H:%M:%S") {
             Ok(v) => v,
             Err(e) => {
-                Self::push_error(
-                    parse_error,
-                    format!("Conversion error: {label}='{s}' (chrono: {e})"),
-                );
+                parse_error.push(&format!("Conversion error: {label}='{s}' (chrono: {e})"));
                 return None;
             }
         };
@@ -451,7 +423,7 @@ impl GameVisitor {
     fn parse_best_time_tz_field(
         utc_time: Option<&str>,
         time: Option<&str>,
-        parse_error: &mut Option<String>,
+        parse_error: &mut ErrorAccumulator,
     ) -> Option<duckdb_time_tz> {
         if let Some(raw) = utc_time
             && let Some(parsed) = Self::parse_time_tz_field(raw, "UTCTime", parse_error)
@@ -497,28 +469,28 @@ impl GameVisitor {
         Some(hh * 3600 + mm * 60)
     }
 
-    fn build_game_record(&mut self, mut parse_error: Option<String>) {
+    fn build_game_record(&mut self) {
         let white_elo = Self::parse_uinteger_field(
             (!self.headers.white_elo.is_empty()).then_some(self.headers.white_elo.as_str()),
             "WhiteElo",
-            &mut parse_error,
+            &mut self.parse_error,
         );
         let black_elo = Self::parse_uinteger_field(
             (!self.headers.black_elo.is_empty()).then_some(self.headers.black_elo.as_str()),
             "BlackElo",
-            &mut parse_error,
+            &mut self.parse_error,
         );
 
         let utc_date = Self::parse_best_date_field(
             (!self.headers.utc_date.is_empty()).then_some(self.headers.utc_date.as_str()),
             (!self.headers.date.is_empty()).then_some(self.headers.date.as_str()),
             (!self.headers.event_date.is_empty()).then_some(self.headers.event_date.as_str()),
-            &mut parse_error,
+            &mut self.parse_error,
         );
         let utc_time = Self::parse_best_time_tz_field(
             (!self.headers.utc_time.is_empty()).then_some(self.headers.utc_time.as_str()),
             (!self.headers.time.is_empty()).then_some(self.headers.time.as_str()),
-            &mut parse_error,
+            &mut self.parse_error,
         );
 
         self.current_game = Some(GameRecord {
@@ -540,17 +512,18 @@ impl GameVisitor {
             termination: HeaderFields::opt_take(&mut self.headers.termination),
             time_control: HeaderFields::opt_take(&mut self.headers.time_control),
             movetext: mem::take(&mut self.movetext_buffer).trim().to_string(),
-            parse_error,
+            parse_error: self.parse_error.take(),
         });
     }
 
     fn finalize_game(&mut self) {
-        self.build_game_record(None);
+        self.build_game_record();
     }
 
     /// Spec: pgn-parsing - Error Message Capture
     pub fn finalize_game_with_error(&mut self, error_msg: String) {
-        self.build_game_record(Some(error_msg));
+        self.parse_error.push(&error_msg);
+        self.build_game_record();
     }
 }
 
@@ -591,6 +564,7 @@ impl Visitor for GameVisitor {
         self.movetext_buffer.clear();
         self.move_count = 0;
         self.result_marker = None;
+        self.parse_error = ErrorAccumulator::default();
         self.current_game = None;
         ControlFlow::Continue(())
     }

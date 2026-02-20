@@ -1,4 +1,5 @@
 use super::visitor::{PgnInput, PgnReaderState, SharedState};
+use crate::chess::ErrorAccumulator;
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
@@ -134,28 +135,13 @@ fn open_input_stream(path: &PathBuf, compression: CompressionMode) -> Result<Pgn
     }
 }
 
-fn append_parse_error(parse_error: &mut Option<String>, message: String) {
-    match parse_error {
-        Some(existing) => {
-            existing.push_str("; ");
-            existing.push_str(&message);
-        }
-        None => {
-            *parse_error = Some(message);
-        }
-    }
-}
-
 fn sanitize_for_cstring<'a>(
     value: &'a str,
     field_name: &str,
-    parse_error: &mut Option<String>,
+    parse_error: &mut ErrorAccumulator,
 ) -> Cow<'a, str> {
     if value.contains('\0') {
-        append_parse_error(
-            parse_error,
-            format!("Sanitized interior NUL in {}", field_name),
-        );
+        parse_error.push(&format!("Sanitized interior NUL in {}", field_name));
         Cow::Owned(value.replace('\0', " "))
     } else {
         Cow::Borrowed(value)
@@ -367,7 +353,10 @@ impl VTab for ReadPgnVTab {
                     let game = &reader.record_buffer;
                     let i = count;
 
-                    let mut row_parse_error = game.parse_error.clone();
+                    let mut row_parse_error = ErrorAccumulator::default();
+                    if let Some(parse_error) = game.parse_error.as_deref() {
+                        row_parse_error.push(parse_error);
+                    }
 
                     insert_optional_varchar!(
                         &mut event_vec,
@@ -482,11 +471,12 @@ impl VTab for ReadPgnVTab {
                         &mut row_parse_error
                     );
 
-                    if let Some(parse_error) = row_parse_error.as_deref() {
-                        let parse_error = sanitize_for_cstring_silent(parse_error);
-                        parse_error_vec.insert(i, CString::new(parse_error.as_ref())?);
-                    } else {
+                    if row_parse_error.is_empty() {
                         parse_error_vec.set_null(i);
+                    } else {
+                        let parse_error = row_parse_error.take().unwrap_or_default();
+                        let parse_error = sanitize_for_cstring_silent(parse_error.as_str());
+                        parse_error_vec.insert(i, CString::new(parse_error.as_ref())?);
                     }
 
                     count += 1;
@@ -580,19 +570,19 @@ mod tests {
 
     #[test]
     fn test_sanitize_for_cstring_preserves_clean_values() {
-        let mut parse_error = None;
+        let mut parse_error = ErrorAccumulator::default();
         let sanitized = sanitize_for_cstring("normal text", "Event", &mut parse_error);
         assert_eq!(sanitized.as_ref(), "normal text");
-        assert!(parse_error.is_none());
+        assert!(parse_error.is_empty());
     }
 
     #[test]
     fn test_sanitize_for_cstring_replaces_interior_nul_and_records_error() {
-        let mut parse_error = None;
+        let mut parse_error = ErrorAccumulator::default();
         let sanitized = sanitize_for_cstring("A\0B", "Event", &mut parse_error);
         assert_eq!(sanitized.as_ref(), "A B");
 
-        let message = parse_error.expect("expected parse_error message");
+        let message = parse_error.take().expect("expected parse_error message");
         assert!(message.contains("Sanitized interior NUL in Event"));
     }
 
