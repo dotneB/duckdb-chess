@@ -101,7 +101,7 @@ impl HeaderFields {
         }
     }
 
-    fn set_known_tag(&mut self, key: &[u8], value: String) {
+    fn set_known_tag(&mut self, key: &[u8], value: RawTag<'_>) {
         let slot: &mut String = match key {
             b"Event" => &mut self.event,
             b"Site" => &mut self.site,
@@ -125,9 +125,16 @@ impl HeaderFields {
             _ => return,
         };
 
-        if slot.is_empty() {
-            *slot = value;
+        if !slot.is_empty() {
+            return;
         }
+
+        let bytes = value.as_bytes();
+        if bytes.is_empty() {
+            return;
+        }
+
+        *slot = String::from_utf8_lossy(bytes).into_owned();
     }
 }
 
@@ -493,6 +500,21 @@ impl GameVisitor {
             &mut self.parse_error,
         );
 
+        let movetext = {
+            let needs_trim = {
+                let trimmed = self.movetext_buffer.trim();
+                trimmed.len() != self.movetext_buffer.len()
+            };
+
+            if needs_trim {
+                let trimmed = self.movetext_buffer.trim().to_string();
+                let _ = mem::take(&mut self.movetext_buffer);
+                trimmed
+            } else {
+                mem::take(&mut self.movetext_buffer)
+            }
+        };
+
         self.current_game = Some(GameRecord {
             event: HeaderFields::opt_take(&mut self.headers.event),
             site: HeaderFields::opt_take(&mut self.headers.site),
@@ -511,7 +533,7 @@ impl GameVisitor {
             opening: HeaderFields::opt_take(&mut self.headers.opening),
             termination: HeaderFields::opt_take(&mut self.headers.termination),
             time_control: HeaderFields::opt_take(&mut self.headers.time_control),
-            movetext: mem::take(&mut self.movetext_buffer).trim().to_string(),
+            movetext,
             parse_error: self.parse_error.take(),
         });
     }
@@ -575,8 +597,7 @@ impl Visitor for GameVisitor {
         key: &[u8],
         value: RawTag<'_>,
     ) -> ControlFlow<Self::Output> {
-        let value_str = String::from_utf8_lossy(value.as_bytes()).into_owned();
-        self.headers.set_known_tag(key, value_str);
+        self.headers.set_known_tag(key, value);
         ControlFlow::Continue(())
     }
 
@@ -667,6 +688,24 @@ mod tests {
     }
 
     #[test]
+    fn test_visitor_unknown_headers_are_ignored() {
+        let pgn = r#"[Event "Known"]
+[SomeRandomTag "noise"]
+[Site "Somewhere"]
+1. e4 1-0"#;
+
+        let mut reader = Reader::new(pgn.as_bytes());
+        let mut visitor = GameVisitor::new();
+
+        reader.read_game(&mut visitor).unwrap();
+
+        let game = visitor.current_game.expect("Should have parsed a game");
+        assert_eq!(game.event.as_deref(), Some("Known"));
+        assert_eq!(game.site.as_deref(), Some("Somewhere"));
+        assert_eq!(game.result.as_deref(), Some("1-0"));
+    }
+
+    #[test]
     fn test_visitor_duplicate_headers_preserve_first_value() {
         let pgn = r#"[Event "First Event"]
 [Event "Second Event"]
@@ -711,6 +750,29 @@ mod tests {
         let game = visitor.current_game.expect("Should have parsed a game");
         assert_eq!(game.movetext, "");
         assert_eq!(game.result.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn test_visitor_movetext_finalization_trims_surrounding_whitespace() {
+        let mut visitor = GameVisitor::new();
+        visitor.movetext_buffer = "  1. e4 e5  ".to_string();
+
+        visitor.build_game_record();
+
+        let game = visitor.current_game.expect("Should have built a record");
+        assert_eq!(game.movetext, "1. e4 e5");
+    }
+
+    #[test]
+    fn test_visitor_error_finalization_trims_movetext_and_sets_parse_error() {
+        let mut visitor = GameVisitor::new();
+        visitor.movetext_buffer = "  1. e4  ".to_string();
+
+        visitor.finalize_game_with_error("boom".to_string());
+
+        let game = visitor.current_game.expect("Should have built a record");
+        assert_eq!(game.movetext, "1. e4");
+        assert_eq!(game.parse_error.as_deref(), Some("boom"));
     }
 
     #[test]
