@@ -1,4 +1,7 @@
-use super::visitor::{PgnInput, PgnReaderState, SharedState};
+use super::{
+    types::GameRecord,
+    visitor::{PgnInput, PgnReaderState, SharedState},
+};
 use crate::chess::ErrorAccumulator;
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
@@ -12,7 +15,7 @@ use std::borrow::Cow;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::os::raw::c_void;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zstd::stream::read::Decoder as ZstdDecoder;
 
@@ -34,6 +37,141 @@ enum CompressionMode {
     Plain,
     Zstd,
 }
+
+const PATH_PATTERN_PARAM_INDEX: u64 = 0;
+const ROWS_PER_CHUNK: usize = 2048;
+const READ_PGN_COLUMN_COUNT: usize = 18;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadPgnColumn {
+    Event = 0,
+    Site = 1,
+    White = 2,
+    Black = 3,
+    Result = 4,
+    WhiteTitle = 5,
+    BlackTitle = 6,
+    WhiteElo = 7,
+    BlackElo = 8,
+    UtcDate = 9,
+    UtcTime = 10,
+    Eco = 11,
+    Opening = 12,
+    Termination = 13,
+    TimeControl = 14,
+    Movetext = 15,
+    ParseError = 16,
+    Source = 17,
+}
+
+impl ReadPgnColumn {
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    fn name(self) -> &'static str {
+        READ_PGN_COLUMNS[self.index()].name
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadPgnLogicalType {
+    Varchar,
+    UInteger,
+    Date,
+    TimeTz,
+}
+
+impl ReadPgnLogicalType {
+    fn to_handle(self) -> LogicalTypeHandle {
+        match self {
+            Self::Varchar => LogicalTypeHandle::from(LogicalTypeId::Varchar),
+            Self::UInteger => LogicalTypeHandle::from(LogicalTypeId::UInteger),
+            Self::Date => LogicalTypeHandle::from(LogicalTypeId::Date),
+            Self::TimeTz => LogicalTypeHandle::from(LogicalTypeId::TimeTZ),
+        }
+    }
+}
+
+struct ReadPgnColumnDef {
+    name: &'static str,
+    logical_type: ReadPgnLogicalType,
+}
+
+const READ_PGN_COLUMNS: [ReadPgnColumnDef; READ_PGN_COLUMN_COUNT] = [
+    ReadPgnColumnDef {
+        name: "Event",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "Site",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "White",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "Black",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "Result",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "WhiteTitle",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "BlackTitle",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "WhiteElo",
+        logical_type: ReadPgnLogicalType::UInteger,
+    },
+    ReadPgnColumnDef {
+        name: "BlackElo",
+        logical_type: ReadPgnLogicalType::UInteger,
+    },
+    ReadPgnColumnDef {
+        name: "UTCDate",
+        logical_type: ReadPgnLogicalType::Date,
+    },
+    ReadPgnColumnDef {
+        name: "UTCTime",
+        logical_type: ReadPgnLogicalType::TimeTz,
+    },
+    ReadPgnColumnDef {
+        name: "ECO",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "Opening",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "Termination",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "TimeControl",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "movetext",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "parse_error",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+    ReadPgnColumnDef {
+        name: "Source",
+        logical_type: ReadPgnLogicalType::Varchar,
+    },
+];
 
 impl CompressionMode {
     fn parse(raw: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -156,15 +294,288 @@ fn sanitize_for_cstring_silent(value: &str) -> Cow<'_, str> {
     }
 }
 
-macro_rules! insert_optional_varchar {
-    ($vector:expr, $row:expr, $value:expr, $field_name:expr, $parse_error:expr) => {{
-        if let Some(value) = $value {
-            let sanitized = sanitize_for_cstring(value, $field_name, $parse_error);
-            $vector.insert($row, CString::new(sanitized.as_ref())?);
-        } else {
-            $vector.set_null($row);
+enum ReadNextGameOutcome {
+    GameReady,
+    ReaderFinished,
+}
+
+struct ChunkWriter<'a> {
+    output: &'a mut DataChunkHandle,
+    row_count: usize,
+}
+
+impl<'a> ChunkWriter<'a> {
+    fn new(output: &'a mut DataChunkHandle) -> Self {
+        Self {
+            output,
+            row_count: 0,
         }
-    }};
+    }
+
+    fn is_full(&self) -> bool {
+        self.row_count >= ROWS_PER_CHUNK
+    }
+
+    fn write_row(&mut self, game: &GameRecord) -> Result<(), Box<dyn std::error::Error>> {
+        let row_idx = self.row_count;
+        let mut row_parse_error = ErrorAccumulator::default();
+        if let Some(parse_error) = game.parse_error.as_deref() {
+            row_parse_error.push(parse_error);
+        }
+
+        self.write_optional_varchar(
+            ReadPgnColumn::Event,
+            row_idx,
+            game.event.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_varchar(
+            ReadPgnColumn::Site,
+            row_idx,
+            game.site.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_varchar(
+            ReadPgnColumn::White,
+            row_idx,
+            game.white.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_varchar(
+            ReadPgnColumn::Black,
+            row_idx,
+            game.black.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_varchar(
+            ReadPgnColumn::Result,
+            row_idx,
+            game.result.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_varchar(
+            ReadPgnColumn::WhiteTitle,
+            row_idx,
+            game.white_title.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_varchar(
+            ReadPgnColumn::BlackTitle,
+            row_idx,
+            game.black_title.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_uinteger(ReadPgnColumn::WhiteElo, row_idx, game.white_elo);
+        self.write_optional_uinteger(ReadPgnColumn::BlackElo, row_idx, game.black_elo);
+        self.write_optional_date(ReadPgnColumn::UtcDate, row_idx, game.utc_date);
+        self.write_optional_time_tz(ReadPgnColumn::UtcTime, row_idx, game.utc_time);
+        self.write_optional_varchar(
+            ReadPgnColumn::Eco,
+            row_idx,
+            game.eco.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_varchar(
+            ReadPgnColumn::Opening,
+            row_idx,
+            game.opening.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_varchar(
+            ReadPgnColumn::Termination,
+            row_idx,
+            game.termination.as_deref(),
+            &mut row_parse_error,
+        )?;
+        self.write_optional_varchar(
+            ReadPgnColumn::TimeControl,
+            row_idx,
+            game.time_control.as_deref(),
+            &mut row_parse_error,
+        )?;
+
+        let movetext = sanitize_for_cstring(
+            game.movetext.as_str(),
+            ReadPgnColumn::Movetext.name(),
+            &mut row_parse_error,
+        );
+        let movetext_vec = self.output.flat_vector(ReadPgnColumn::Movetext.index());
+        movetext_vec.insert(row_idx, CString::new(movetext.as_ref())?);
+
+        self.write_optional_varchar(
+            ReadPgnColumn::Source,
+            row_idx,
+            game.source.as_deref(),
+            &mut row_parse_error,
+        )?;
+
+        let mut parse_error_vec = self.output.flat_vector(ReadPgnColumn::ParseError.index());
+        if row_parse_error.is_empty() {
+            parse_error_vec.set_null(row_idx);
+        } else {
+            let parse_error = row_parse_error.take().unwrap_or_default();
+            let parse_error = sanitize_for_cstring_silent(parse_error.as_str());
+            parse_error_vec.insert(row_idx, CString::new(parse_error.as_ref())?);
+        }
+
+        self.row_count += 1;
+        Ok(())
+    }
+
+    fn set_output_len(&mut self) {
+        self.output.set_len(self.row_count);
+    }
+
+    fn write_optional_varchar(
+        &mut self,
+        column: ReadPgnColumn,
+        row_idx: usize,
+        value: Option<&str>,
+        parse_error: &mut ErrorAccumulator,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut vector = self.output.flat_vector(column.index());
+        if let Some(value) = value {
+            let sanitized = sanitize_for_cstring(value, column.name(), parse_error);
+            vector.insert(row_idx, CString::new(sanitized.as_ref())?);
+        } else {
+            vector.set_null(row_idx);
+        }
+        Ok(())
+    }
+
+    fn write_optional_uinteger(
+        &mut self,
+        column: ReadPgnColumn,
+        row_idx: usize,
+        value: Option<u32>,
+    ) {
+        let mut vector = self.output.flat_vector(column.index());
+        if let Some(value) = value {
+            vector.as_mut_slice::<u32>()[row_idx] = value;
+        } else {
+            vector.set_null(row_idx);
+        }
+    }
+
+    fn write_optional_date(
+        &mut self,
+        column: ReadPgnColumn,
+        row_idx: usize,
+        value: Option<duckdb_date>,
+    ) {
+        let mut vector = self.output.flat_vector(column.index());
+        if let Some(value) = value {
+            vector.as_mut_slice::<duckdb_date>()[row_idx] = value;
+        } else {
+            vector.set_null(row_idx);
+        }
+    }
+
+    fn write_optional_time_tz(
+        &mut self,
+        column: ReadPgnColumn,
+        row_idx: usize,
+        value: Option<duckdb_time_tz>,
+    ) {
+        let mut vector = self.output.flat_vector(column.index());
+        if let Some(value) = value {
+            vector.as_mut_slice::<duckdb_time_tz>()[row_idx] = value;
+        } else {
+            vector.set_null(row_idx);
+        }
+    }
+}
+
+fn acquire_reader(
+    init_data: &ReadPgnInitData,
+    bind_data: &ReadPgnBindData,
+) -> Result<Option<PgnReaderState>, Box<dyn std::error::Error>> {
+    loop {
+        let path_idx = {
+            let mut state = init_data.state.lock().unwrap();
+
+            if let Some(reader) = state.available_readers.pop() {
+                return Ok(Some(reader));
+            }
+
+            if state.next_path_idx < bind_data.paths.len() {
+                let path_idx = state.next_path_idx;
+                state.next_path_idx += 1;
+                path_idx
+            } else {
+                return Ok(None);
+            }
+        };
+
+        let path = &bind_data.paths[path_idx];
+        match open_input_stream(path, bind_data.compression) {
+            Ok(input_stream) => {
+                return Ok(Some(PgnReaderState::new(input_stream, path_idx)));
+            }
+            Err(err_msg) => {
+                if bind_data.paths.len() == 1 {
+                    return Err(err_msg.into());
+                }
+
+                eprintln!("WARNING: {}", err_msg);
+            }
+        }
+    }
+}
+
+fn read_next_game(reader: &mut PgnReaderState, source_path: &Path) -> ReadNextGameOutcome {
+    let game_index = reader.next_game_index;
+
+    match reader.pgn_reader.read_game(&mut reader.visitor) {
+        Ok(Some(_)) => {
+            reader.next_game_index += 1;
+            if let Some(game) = reader.visitor.current_game.take() {
+                reader.record_buffer = game;
+                ReadNextGameOutcome::GameReady
+            } else {
+                ReadNextGameOutcome::ReaderFinished
+            }
+        }
+        Ok(None) => ReadNextGameOutcome::ReaderFinished,
+        Err(error) => {
+            reader.next_game_index += 1;
+            let error_msg = format!(
+                "Parser-stage error: stage=read_game; file='{}'; game_index={}; error={}",
+                source_path.display(),
+                game_index,
+                error
+            );
+            eprintln!("WARNING: {}", error_msg);
+            reader.visitor.finalize_game_with_error(error_msg);
+
+            if let Some(game) = reader.visitor.current_game.take() {
+                reader.record_buffer = game;
+                ReadNextGameOutcome::GameReady
+            } else {
+                ReadNextGameOutcome::ReaderFinished
+            }
+        }
+    }
+}
+
+fn write_row(
+    chunk_writer: &mut ChunkWriter<'_>,
+    reader: &PgnReaderState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    chunk_writer.write_row(&reader.record_buffer)
+}
+
+fn finalize_chunk(
+    init_data: &ReadPgnInitData,
+    current_reader_state: Option<PgnReaderState>,
+    chunk_writer: &mut ChunkWriter<'_>,
+) {
+    if let Some(reader) = current_reader_state {
+        let mut state = init_data.state.lock().unwrap();
+        state.available_readers.push(reader);
+    }
+
+    chunk_writer.set_output_len();
 }
 
 impl VTab for ReadPgnVTab {
@@ -172,7 +583,7 @@ impl VTab for ReadPgnVTab {
     type BindData = ReadPgnBindData;
 
     fn bind(bind: &BindInfo) -> Result<Self::BindData, Box<dyn std::error::Error>> {
-        let pattern = bind.get_parameter(0).to_string();
+        let pattern = bind.get_parameter(PATH_PATTERN_PARAM_INDEX).to_string();
         let compression = resolve_compression_mode(bind)?;
 
         // Spec: pgn-parsing - PGN File Reading
@@ -187,45 +598,9 @@ impl VTab for ReadPgnVTab {
             vec![PathBuf::from(pattern)]
         };
 
-        // Spec: data-schema - Lichess Schema Compatibility
-        // Extended Lichess dataset schema (16 base columns + 2 extra columns = 18 total)
-        bind.add_result_column("Event", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("Site", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("White", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("Black", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("Result", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column(
-            "WhiteTitle",
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        );
-        bind.add_result_column(
-            "BlackTitle",
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        );
-        bind.add_result_column("WhiteElo", LogicalTypeHandle::from(LogicalTypeId::UInteger));
-        bind.add_result_column("BlackElo", LogicalTypeHandle::from(LogicalTypeId::UInteger));
-        bind.add_result_column("UTCDate", LogicalTypeHandle::from(LogicalTypeId::Date));
-        bind.add_result_column("UTCTime", LogicalTypeHandle::from(LogicalTypeId::TimeTZ));
-        bind.add_result_column("ECO", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column("Opening", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-        bind.add_result_column(
-            "Termination",
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        );
-        bind.add_result_column(
-            "TimeControl",
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        );
-        bind.add_result_column("movetext", LogicalTypeHandle::from(LogicalTypeId::Varchar));
-
-        // Spec: data-schema - Parse Error Column
-        // 17th column: diagnostic information about parsing failures (VARCHAR, nullable)
-        bind.add_result_column(
-            "parse_error",
-            LogicalTypeHandle::from(LogicalTypeId::Varchar),
-        );
-
-        bind.add_result_column("Source", LogicalTypeHandle::from(LogicalTypeId::Varchar));
+        for column in READ_PGN_COLUMNS.iter() {
+            bind.add_result_column(column.name, column.logical_type.to_handle());
+        }
 
         Ok(ReadPgnBindData { paths, compression })
     }
@@ -245,257 +620,38 @@ impl VTab for ReadPgnVTab {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let init_data = func.get_init_data();
         let bind_data = func.get_bind_data();
-
-        let mut event_vec = output.flat_vector(0);
-        let mut site_vec = output.flat_vector(1);
-        let mut white_vec = output.flat_vector(2);
-        let mut black_vec = output.flat_vector(3);
-        let mut result_vec = output.flat_vector(4);
-        let mut white_title_vec = output.flat_vector(5);
-        let mut black_title_vec = output.flat_vector(6);
-        let mut white_elo_vec = output.flat_vector(7);
-        let mut black_elo_vec = output.flat_vector(8);
-        let mut utc_date_vec = output.flat_vector(9);
-        let mut utc_time_vec = output.flat_vector(10);
-        let mut eco_vec = output.flat_vector(11);
-        let mut opening_vec = output.flat_vector(12);
-        let mut termination_vec = output.flat_vector(13);
-        let mut time_control_vec = output.flat_vector(14);
-        let movetext_vec = output.flat_vector(15);
-        let mut parse_error_vec = output.flat_vector(16);
-        let mut source_vec = output.flat_vector(17);
-
-        let mut count = 0;
+        let mut chunk_writer = ChunkWriter::new(output);
         let mut current_reader_state: Option<PgnReaderState> = None;
 
-        while count < 2048 {
-            // Acquire work
+        while !chunk_writer.is_full() {
             if current_reader_state.is_none() {
-                let mut state = init_data.state.lock().unwrap();
-
-                if let Some(reader) = state.available_readers.pop() {
-                    current_reader_state = Some(reader);
-                } else if state.next_path_idx < bind_data.paths.len() {
-                    let path_idx = state.next_path_idx;
-                    state.next_path_idx += 1;
-
-                    // Unlock early to allow parallelism
-                    drop(state);
-
-                    let path = &bind_data.paths[path_idx];
-                    match open_input_stream(path, bind_data.compression) {
-                        Ok(input_stream) => {
-                            current_reader_state =
-                                Some(PgnReaderState::new(input_stream, path_idx));
-                        }
-                        Err(err_msg) => {
-                            // If we only have one path (likely explicit single file), fail hard.
-                            // If we have multiple (glob result), warn and skip.
-                            if bind_data.paths.len() == 1 {
-                                return Err(err_msg.into());
-                            } else {
-                                eprintln!("WARNING: {}", err_msg);
-                                continue;
-                            }
-                        }
-                    }
-                } else {
-                    // No more work
+                current_reader_state = acquire_reader(init_data, bind_data)?;
+                if current_reader_state.is_none() {
                     break;
                 }
             }
 
-            // Process using current reader
             if let Some(mut reader) = current_reader_state.take() {
                 // Use pgn-reader's Reader directly for streaming PGN parsing.
                 // Note: For plain files we do NOT add an extra BufReader layer because
                 // pgn-reader's documentation states:
                 // "Buffers the underlying reader with an appropriate strategy, so it's not
                 // recommended to add an additional layer of buffering like BufReader."
-                let game_index = reader.next_game_index;
-                let game_found = match reader.pgn_reader.read_game(&mut reader.visitor) {
-                    Ok(Some(_)) => {
-                        reader.next_game_index += 1;
-                        // Successfully parsed a game
-                        if let Some(game) = reader.visitor.current_game.take() {
-                            reader.record_buffer = game;
-                            true
-                        } else {
-                            false
-                        }
+                let source_path = &bind_data.paths[reader.path_idx];
+                match read_next_game(&mut reader, source_path) {
+                    ReadNextGameOutcome::GameReady => {
+                        write_row(&mut chunk_writer, &reader)?;
+                        current_reader_state = Some(reader);
                     }
-                    Ok(None) => {
-                        // EOF reached - no more games in this file
-                        false
+                    ReadNextGameOutcome::ReaderFinished => {
+                        // Reader finished (EOF or no recoverable record)
+                        // It will be dropped here and loop will acquire new work.
                     }
-                    Err(e) => {
-                        reader.next_game_index += 1;
-                        // Parsing error - create partial game with error message
-                        let error_msg = format!(
-                            "Parser-stage error: stage=read_game; file='{}'; game_index={}; error={}",
-                            bind_data.paths[reader.path_idx].display(),
-                            game_index,
-                            e
-                        );
-                        eprintln!("WARNING: {}", error_msg);
-                        reader.visitor.finalize_game_with_error(error_msg);
-                        if let Some(game) = reader.visitor.current_game.take() {
-                            reader.record_buffer = game;
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                };
-
-                if game_found {
-                    // Write to DuckDB
-                    let game = &reader.record_buffer;
-                    let i = count;
-
-                    let mut row_parse_error = ErrorAccumulator::default();
-                    if let Some(parse_error) = game.parse_error.as_deref() {
-                        row_parse_error.push(parse_error);
-                    }
-
-                    insert_optional_varchar!(
-                        &mut event_vec,
-                        i,
-                        game.event.as_deref(),
-                        "Event",
-                        &mut row_parse_error
-                    );
-                    insert_optional_varchar!(
-                        &mut site_vec,
-                        i,
-                        game.site.as_deref(),
-                        "Site",
-                        &mut row_parse_error
-                    );
-                    insert_optional_varchar!(
-                        &mut white_vec,
-                        i,
-                        game.white.as_deref(),
-                        "White",
-                        &mut row_parse_error
-                    );
-                    insert_optional_varchar!(
-                        &mut black_vec,
-                        i,
-                        game.black.as_deref(),
-                        "Black",
-                        &mut row_parse_error
-                    );
-                    insert_optional_varchar!(
-                        &mut result_vec,
-                        i,
-                        game.result.as_deref(),
-                        "Result",
-                        &mut row_parse_error
-                    );
-                    insert_optional_varchar!(
-                        &mut white_title_vec,
-                        i,
-                        game.white_title.as_deref(),
-                        "WhiteTitle",
-                        &mut row_parse_error
-                    );
-                    insert_optional_varchar!(
-                        &mut black_title_vec,
-                        i,
-                        game.black_title.as_deref(),
-                        "BlackTitle",
-                        &mut row_parse_error
-                    );
-                    if let Some(val) = game.white_elo {
-                        white_elo_vec.as_mut_slice::<u32>()[i] = val;
-                    } else {
-                        white_elo_vec.set_null(i);
-                    }
-                    if let Some(val) = game.black_elo {
-                        black_elo_vec.as_mut_slice::<u32>()[i] = val;
-                    } else {
-                        black_elo_vec.set_null(i);
-                    }
-                    if let Some(val) = game.utc_date {
-                        utc_date_vec.as_mut_slice::<duckdb_date>()[i] = val;
-                    } else {
-                        utc_date_vec.set_null(i);
-                    }
-                    if let Some(val) = game.utc_time {
-                        utc_time_vec.as_mut_slice::<duckdb_time_tz>()[i] = val;
-                    } else {
-                        utc_time_vec.set_null(i);
-                    }
-                    insert_optional_varchar!(
-                        &mut eco_vec,
-                        i,
-                        game.eco.as_deref(),
-                        "ECO",
-                        &mut row_parse_error
-                    );
-                    insert_optional_varchar!(
-                        &mut opening_vec,
-                        i,
-                        game.opening.as_deref(),
-                        "Opening",
-                        &mut row_parse_error
-                    );
-                    insert_optional_varchar!(
-                        &mut termination_vec,
-                        i,
-                        game.termination.as_deref(),
-                        "Termination",
-                        &mut row_parse_error
-                    );
-                    insert_optional_varchar!(
-                        &mut time_control_vec,
-                        i,
-                        game.time_control.as_deref(),
-                        "TimeControl",
-                        &mut row_parse_error
-                    );
-
-                    let movetext = sanitize_for_cstring(
-                        game.movetext.as_str(),
-                        "movetext",
-                        &mut row_parse_error,
-                    );
-                    movetext_vec.insert(i, CString::new(movetext.as_ref())?);
-
-                    insert_optional_varchar!(
-                        &mut source_vec,
-                        i,
-                        game.source.as_deref(),
-                        "Source",
-                        &mut row_parse_error
-                    );
-
-                    if row_parse_error.is_empty() {
-                        parse_error_vec.set_null(i);
-                    } else {
-                        let parse_error = row_parse_error.take().unwrap_or_default();
-                        let parse_error = sanitize_for_cstring_silent(parse_error.as_str());
-                        parse_error_vec.insert(i, CString::new(parse_error.as_ref())?);
-                    }
-
-                    count += 1;
-                    current_reader_state = Some(reader); // Return reader to local var for next iteration
-                } else {
-                    // Reader finished (EOF)
-                    // It will be dropped here (current_reader_state remains None)
-                    // Loop continues to acquire next reader
                 }
             }
         }
 
-        // Return reader to pool if we stopped due to count limit
-        if let Some(reader) = current_reader_state {
-            let mut state = init_data.state.lock().unwrap();
-            state.available_readers.push(reader);
-        }
-
-        output.set_len(count);
+        finalize_chunk(init_data, current_reader_state, &mut chunk_writer);
         Ok(())
     }
 
@@ -566,6 +722,40 @@ mod tests {
         };
         assert_eq!(init_data.state.lock().unwrap().next_path_idx, 0);
         assert!(init_data.state.lock().unwrap().available_readers.is_empty());
+    }
+
+    #[test]
+    fn test_read_pgn_columns_match_contract() {
+        let expected: [(&str, ReadPgnLogicalType); READ_PGN_COLUMN_COUNT] = [
+            ("Event", ReadPgnLogicalType::Varchar),
+            ("Site", ReadPgnLogicalType::Varchar),
+            ("White", ReadPgnLogicalType::Varchar),
+            ("Black", ReadPgnLogicalType::Varchar),
+            ("Result", ReadPgnLogicalType::Varchar),
+            ("WhiteTitle", ReadPgnLogicalType::Varchar),
+            ("BlackTitle", ReadPgnLogicalType::Varchar),
+            ("WhiteElo", ReadPgnLogicalType::UInteger),
+            ("BlackElo", ReadPgnLogicalType::UInteger),
+            ("UTCDate", ReadPgnLogicalType::Date),
+            ("UTCTime", ReadPgnLogicalType::TimeTz),
+            ("ECO", ReadPgnLogicalType::Varchar),
+            ("Opening", ReadPgnLogicalType::Varchar),
+            ("Termination", ReadPgnLogicalType::Varchar),
+            ("TimeControl", ReadPgnLogicalType::Varchar),
+            ("movetext", ReadPgnLogicalType::Varchar),
+            ("parse_error", ReadPgnLogicalType::Varchar),
+            ("Source", ReadPgnLogicalType::Varchar),
+        ];
+
+        for (idx, column) in READ_PGN_COLUMNS.iter().enumerate() {
+            assert_eq!(column.name, expected[idx].0);
+            assert_eq!(column.logical_type, expected[idx].1);
+        }
+    }
+
+    #[test]
+    fn test_rows_per_chunk_constant_matches_contract() {
+        assert_eq!(ROWS_PER_CHUNK, 2048);
     }
 
     #[test]
