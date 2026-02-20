@@ -1,13 +1,11 @@
-use super::duckdb_string::decode_duckdb_string;
+use super::scalar::{VarcharNullBehavior, VarcharOutput, invoke_unary_varchar_to_varchar};
 use duckdb::{
-    core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
+    core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId},
     vscalar::{ScalarFunctionSignature, VScalar},
     vtab::arrow::WritableVector,
 };
-use libduckdb_sys::duckdb_string_t;
 use smallvec::SmallVec;
 use std::error::Error;
-use std::ffi::CString;
 use std::fmt::Write;
 use std::io;
 use std::ops::ControlFlow;
@@ -191,23 +189,9 @@ impl VScalar for ChessMovesNormalizeScalar {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec = input.flat_vector(0);
-        let mut output_vec = output.flat_vector();
-
-        let input_slice = input_vec.as_slice::<duckdb_string_t>();
-
-        for (i, s) in input_slice.iter().take(len).enumerate() {
-            if input_vec.row_is_null(i as u64) {
-                output_vec.set_null(i);
-                continue;
-            }
-
-            let val = unsafe { decode_duckdb_string(s) };
-            let normalized = normalize_movetext(val.as_ref());
-            output_vec.insert(i, CString::new(normalized)?);
-        }
-        Ok(())
+        invoke_unary_varchar_to_varchar(input, output, VarcharNullBehavior::Null, |movetext| {
+            Ok(VarcharOutput::Value(normalize_movetext(movetext)))
+        })
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {

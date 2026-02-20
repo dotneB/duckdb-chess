@@ -1,8 +1,10 @@
 mod duckdb_string;
 mod error;
 mod filter;
+mod log;
 mod moves;
 mod reader;
+mod scalar;
 mod timecontrol;
 mod types;
 mod visitor;

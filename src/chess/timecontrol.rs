@@ -1,15 +1,13 @@
 use duckdb::vtab::arrow::WritableVector;
 use duckdb::{
     Result,
-    core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
+    core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId},
     vscalar::{ScalarFunctionSignature, VScalar},
 };
-use libduckdb_sys::duckdb_string_t;
 use std::error::Error;
-use std::ffi::CString;
 use std::sync::LazyLock;
 
-use crate::chess::duckdb_string::decode_duckdb_string;
+use super::scalar::{VarcharNullBehavior, VarcharOutput, invoke_unary_varchar_to_varchar};
 
 static TRAILING_QUALIFIER_SUFFIX_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"^(.+?)\s+(\p{L}+)$").expect("valid trailing qualifier suffix regex")
@@ -139,30 +137,12 @@ impl VScalar for ChessTimecontrolNormalizeScalar {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec = input.flat_vector(0);
-        let mut output_vec = output.flat_vector();
-
-        let input_slice = input_vec.as_slice::<duckdb_string_t>();
-
-        for (i, s) in input_slice.iter().take(len).enumerate() {
-            if input_vec.row_is_null(i as u64) {
-                output_vec.set_null(i);
-                continue;
-            }
-
-            let val = unsafe { decode_duckdb_string(s) };
-            match normalize_timecontrol(val.as_ref()) {
-                Some(normalized) => {
-                    output_vec.insert(i, CString::new(normalized)?);
-                }
-                None => {
-                    output_vec.set_null(i);
-                }
-            }
-        }
-
-        Ok(())
+        invoke_unary_varchar_to_varchar(input, output, VarcharNullBehavior::Null, |timecontrol| {
+            Ok(match normalize_timecontrol(timecontrol) {
+                Some(normalized) => VarcharOutput::Value(normalized),
+                None => VarcharOutput::Null,
+            })
+        })
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -183,40 +163,24 @@ impl VScalar for ChessTimecontrolJsonScalar {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec = input.flat_vector(0);
-        let mut output_vec = output.flat_vector();
-
-        let input_slice = input_vec.as_slice::<duckdb_string_t>();
-
-        for (i, s) in input_slice.iter().take(len).enumerate() {
-            if input_vec.row_is_null(i as u64) {
-                output_vec.set_null(i);
-                continue;
-            }
-
-            let val = unsafe { decode_duckdb_string(s) };
-            match parse_timecontrol(val.as_ref()) {
-                Ok(parsed) => {
-                    let json = timecontrol_to_json(&parsed);
-                    output_vec.insert(i, CString::new(json)?);
-                }
+        invoke_unary_varchar_to_varchar(input, output, VarcharNullBehavior::Null, |timecontrol| {
+            let json = match parse_timecontrol(timecontrol) {
+                Ok(parsed) => timecontrol_to_json(&parsed),
                 Err(_) => {
                     let parsed = ParsedTimeControl {
-                        raw: val.into_owned(),
+                        raw: timecontrol.to_string(),
                         normalized: None,
                         periods: Vec::new(),
                         mode: Mode::Unknown,
                         warnings: vec!["parse_error".to_string()],
                         inferred: false,
                     };
-                    let json = timecontrol_to_json(&parsed);
-                    output_vec.insert(i, CString::new(json)?);
+                    timecontrol_to_json(&parsed)
                 }
-            }
-        }
+            };
 
-        Ok(())
+            Ok(VarcharOutput::Value(json))
+        })
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -237,30 +201,12 @@ impl VScalar for ChessTimecontrolCategoryScalar {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec = input.flat_vector(0);
-        let mut output_vec = output.flat_vector();
-
-        let input_slice = input_vec.as_slice::<duckdb_string_t>();
-
-        for (i, s) in input_slice.iter().take(len).enumerate() {
-            if input_vec.row_is_null(i as u64) {
-                output_vec.set_null(i);
-                continue;
-            }
-
-            let val = unsafe { decode_duckdb_string(s) };
-            match categorize_timecontrol(val.as_ref()) {
-                Some(category) => {
-                    output_vec.insert(i, CString::new(category)?);
-                }
-                None => {
-                    output_vec.set_null(i);
-                }
-            }
-        }
-
-        Ok(())
+        invoke_unary_varchar_to_varchar(input, output, VarcharNullBehavior::Null, |timecontrol| {
+            Ok(match categorize_timecontrol(timecontrol) {
+                Some(category) => VarcharOutput::Value(category.to_string()),
+                None => VarcharOutput::Null,
+            })
+        })
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {

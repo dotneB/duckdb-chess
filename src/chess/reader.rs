@@ -1,4 +1,5 @@
 use super::{
+    log,
     types::GameRecord,
     visitor::{PgnInput, PgnReaderState, SharedState},
 };
@@ -517,7 +518,7 @@ fn acquire_reader(
                     return Err(err_msg.into());
                 }
 
-                eprintln!("WARNING: {}", err_msg);
+                log::warn(&err_msg);
             }
         }
     }
@@ -545,7 +546,7 @@ fn read_next_game(reader: &mut PgnReaderState, source_path: &Path) -> ReadNextGa
                 game_index,
                 error
             );
-            eprintln!("WARNING: {}", error_msg);
+            log::warn(&error_msg);
             reader.visitor.finalize_game_with_error(error_msg);
 
             if let Some(game) = reader.visitor.current_game.take() {

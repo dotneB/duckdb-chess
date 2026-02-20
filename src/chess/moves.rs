@@ -1,20 +1,23 @@
 use duckdb::{
     Result,
-    core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
+    core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId},
     vscalar::{ScalarFunctionSignature, VScalar},
     vtab::arrow::WritableVector,
 };
-use libduckdb_sys::duckdb_string_t;
 use pgn_reader::{Nag, RawComment, Reader, SanPlus as PgnSanPlus, Skip, Visitor};
 use shakmaty::{Chess, EnPassantMode, Position, fen::Fen, san::SanPlus, zobrist::Zobrist64};
 use smallvec::SmallVec;
 use std::error::Error;
-use std::ffi::CString;
 use std::fmt::Write;
 use std::io;
 use std::ops::ControlFlow;
 
-use crate::chess::duckdb_string::decode_duckdb_string;
+use super::log;
+use super::scalar::{
+    VarcharNullBehavior, VarcharOutput, invoke_binary_varchar_varchar_to_bool_nullable,
+    invoke_unary_varchar_optional_i64_to_varchar, invoke_unary_varchar_to_i64_default,
+    invoke_unary_varchar_to_u64_nullable, invoke_unary_varchar_to_varchar,
+};
 use crate::chess::filter::parse_movetext_mainline;
 use crate::pgn_visitor_skip_variations;
 
@@ -30,48 +33,23 @@ impl VScalar for ChessMovesJsonScalar {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec = input.flat_vector(0);
-        let output_vec = output.flat_vector();
+        let mut logged_error = false;
 
-        let max_ply_vec = if input.num_columns() > 1 {
-            Some(input.flat_vector(1))
-        } else {
-            None
-        };
-
-        let input_slice = input_vec.as_slice::<duckdb_string_t>();
-
-        for (i, s) in input_slice.iter().take(len).enumerate() {
-            if input_vec.row_is_null(i as u64) {
-                output_vec.insert(i, CString::new("[]")?);
-                continue;
-            }
-
-            let val = unsafe { decode_duckdb_string(s) };
-
-            let max_ply = match &max_ply_vec {
-                None => None,
-                Some(v) => {
-                    if v.row_is_null(i as u64) {
-                        None
-                    } else {
-                        Some(v.as_slice::<i64>()[i])
-                    }
-                }
-            };
-
-            match process_moves_with_limit(val.as_ref(), max_ply) {
-                Ok(json) => {
-                    output_vec.insert(i, CString::new(json)?);
-                }
+        invoke_unary_varchar_optional_i64_to_varchar(
+            input,
+            output,
+            VarcharNullBehavior::Static("[]"),
+            |movetext, max_ply| match process_moves_with_limit(movetext, max_ply) {
+                Ok(json) => Ok(VarcharOutput::Value(json)),
                 Err(e) => {
-                    eprintln!("Error processing moves: {}", e);
-                    output_vec.insert(i, CString::new("[]")?);
+                    if !logged_error {
+                        logged_error = true;
+                        log::error(format!("Error processing moves: {e}"));
+                    }
+                    Ok(VarcharOutput::Value("[]".to_string()))
                 }
-            }
-        }
-        Ok(())
+            },
+        )
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -238,26 +216,12 @@ impl VScalar for ChessFenEpdScalar {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec = input.flat_vector(0);
-        let mut output_vec = output.flat_vector();
-
-        let input_slice = input_vec.as_slice::<duckdb_string_t>();
-
-        for (i, s) in input_slice.iter().take(len).enumerate() {
-            if input_vec.row_is_null(i as u64) {
-                output_vec.set_null(i);
-                continue;
-            }
-
-            let val = unsafe { decode_duckdb_string(s) };
-            match fen_to_epd(val.as_ref()) {
-                Some(epd) => output_vec.insert(i, CString::new(epd)?),
-                None => output_vec.set_null(i),
-            }
-        }
-
-        Ok(())
+        invoke_unary_varchar_to_varchar(input, output, VarcharNullBehavior::Null, |fen| {
+            Ok(match fen_to_epd(fen) {
+                Some(epd) => VarcharOutput::Value(epd),
+                None => VarcharOutput::Null,
+            })
+        })
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -279,24 +243,7 @@ impl VScalar for ChessPlyCountScalar {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec = input.flat_vector(0);
-        let mut output_vec = output.flat_vector();
-
-        let input_slice = input_vec.as_slice::<duckdb_string_t>();
-        let output_slice = output_vec.as_mut_slice::<i64>();
-
-        for (i, s) in input_slice.iter().take(len).enumerate() {
-            if input_vec.row_is_null(i as u64) {
-                output_slice[i] = 0;
-                continue;
-            }
-
-            let val = unsafe { decode_duckdb_string(s) };
-            output_slice[i] = ply_count(val.as_ref());
-        }
-
-        Ok(())
+        invoke_unary_varchar_to_i64_default(input, output, 0, ply_count)
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -434,25 +381,7 @@ impl VScalar for ChessMovesHashScalar {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec = input.flat_vector(0);
-        let mut output_vec = output.flat_vector();
-
-        let input_slice = input_vec.as_slice::<duckdb_string_t>();
-
-        for (i, s) in input_slice.iter().take(len).enumerate() {
-            if input_vec.row_is_null(i as u64) {
-                output_vec.set_null(i);
-                continue;
-            }
-
-            let val = unsafe { decode_duckdb_string(s) };
-            match movetext_final_zobrist_hash(val.as_ref()) {
-                Some(v) => output_vec.as_mut_slice::<u64>()[i] = v,
-                None => output_vec.set_null(i),
-            }
-        }
-        Ok(())
+        invoke_unary_varchar_to_u64_nullable(input, output, movetext_final_zobrist_hash)
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
@@ -474,27 +403,7 @@ impl VScalar for ChessMovesSubsetScalar {
         input: &mut DataChunkHandle,
         output: &mut dyn WritableVector,
     ) -> Result<(), Box<dyn Error>> {
-        let len = input.len();
-        let input_vec_0 = input.flat_vector(0);
-        let input_vec_1 = input.flat_vector(1);
-        let mut output_vec = output.flat_vector();
-
-        let input_slice_0 = input_vec_0.as_slice::<duckdb_string_t>();
-        let input_slice_1 = input_vec_1.as_slice::<duckdb_string_t>();
-
-        for i in 0..len {
-            if input_vec_0.row_is_null(i as u64) || input_vec_1.row_is_null(i as u64) {
-                output_vec.set_null(i);
-                continue;
-            }
-
-            let short_text = unsafe { decode_duckdb_string(&input_slice_0[i]) };
-            let long_text = unsafe { decode_duckdb_string(&input_slice_1[i]) };
-
-            output_vec.as_mut_slice::<bool>()[i] =
-                check_moves_subset(short_text.as_ref(), long_text.as_ref());
-        }
-        Ok(())
+        invoke_binary_varchar_varchar_to_bool_nullable(input, output, check_moves_subset)
     }
 
     fn signatures() -> Vec<ScalarFunctionSignature> {
