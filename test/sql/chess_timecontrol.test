@@ -155,6 +155,28 @@ SELECT chess_timecontrol_normalize('15 + 10');
 ----
 900+10
 
+# Test whitespace normalization around operators (one-sided)
+query I
+SELECT chess_timecontrol_normalize('15 +10');
+----
+900+10
+
+query I
+SELECT chess_timecontrol_normalize('15+ 10');
+----
+900+10
+
+# Test multi-operator whitespace normalization
+query I
+SELECT chess_timecontrol_normalize('40 / 5400 + 30 : 1800 + 30');
+----
+40/5400+30:1800+30
+
+query I
+SELECT chess_timecontrol_normalize('90 + 30 / 30 + 30');
+----
+5400+30:1800+30
+
 # Test apostrophe notation
 query I
 SELECT chess_timecontrol_normalize('10''+5''''');
@@ -247,6 +269,43 @@ query I
 SELECT chess_timecontrol_normalize('90 + 30 round2');
 ----
 NULL
+
+# Regression: ensure digit-bearing suffix inputs remain NULL
+query I
+SELECT chess_timecontrol_normalize('15 + 10 test123');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_normalize('15+ 10 abc456');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_normalize('15 +10 xyz789');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_normalize('40 / 5400 + 30 : 1800 + 30 garbage123');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_normalize('90 + 30 / 30 + 30 trailing456');
+----
+NULL
+
+# Verify non-digit suffixes are stripped with warning (existing behavior)
+query I
+SELECT chess_timecontrol_normalize('15 + 10 valid');
+----
+900+10
+
+query I
+SELECT chess_timecontrol_json('15 + 10 valid') LIKE '%ignored_trailing_qualifier_suffix%';
+----
+true
 
 query I
 SELECT chess_timecontrol_normalize('"90 + "30');

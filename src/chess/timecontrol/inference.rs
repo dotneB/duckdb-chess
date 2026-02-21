@@ -233,9 +233,17 @@ pub(super) fn preprocess(input: &str) -> PreprocessResult {
     let original = s.clone();
     s = s
         .replace(" + ", "+")
+        .replace("+ ", "+")
+        .replace(" +", "+")
         .replace(" - ", "-")
+        .replace("- ", "-")
+        .replace(" -", "-")
         .replace(" / ", "/")
-        .replace(" : ", ":");
+        .replace("/ ", "/")
+        .replace(" /", "/")
+        .replace(" : ", ":")
+        .replace(": ", ":")
+        .replace(" :", ":");
     if s != original {
         warnings.push("normalized_operator_whitespace".to_string());
     }
@@ -246,7 +254,7 @@ pub(super) fn preprocess(input: &str) -> PreprocessResult {
         warnings.push("mapped_separator".to_string());
 
         let original2 = s.clone();
-        s = s.replace(" + ", "+");
+        s = s.replace(" + ", "+").replace("+ ", "+").replace(" +", "+");
         if s != original2 {
             warnings.push("normalized_operator_whitespace".to_string());
         }
@@ -952,6 +960,30 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_spaces_around_plus_left_only() {
+        let result = parse_timecontrol("15 +10").unwrap();
+        assert_eq!(result.normalized, Some("900+10".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_spaces_around_plus_right_only() {
+        let result = parse_timecontrol("15+ 10").unwrap();
+        assert_eq!(result.normalized, Some("900+10".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_spaces_around_slash_and_colon_in_staged() {
+        let result = parse_timecontrol("40 / 5400 + 30 : 1800 + 30").unwrap();
+        assert_eq!(result.normalized, Some("40/5400+30:1800+30".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_mixed_operator_whitespace_in_stage_by_moves() {
+        let result = parse_timecontrol("90 + 30 / 30 + 30").unwrap();
+        assert_eq!(result.normalized, Some("5400+30:1800+30".to_string()));
+    }
+
+    #[test]
     fn test_apostrophe_notation() {
         let result = parse_timecontrol("10'+5''").unwrap();
         assert_eq!(result.normalized, Some("600+5".to_string()));
@@ -1053,6 +1085,31 @@ mod tests {
     fn test_suffix_with_digits_is_not_stripped() {
         let result = parse_timecontrol("90 + 30 round2").unwrap();
         assert_eq!(result.normalized, None);
+    }
+
+    #[test]
+    fn test_malformed_suffix_with_whitespace_operators_still_fails() {
+        // Regression tests: ensure inputs with digit-bearing suffixes still fail
+        // (non-digit suffixes are stripped as trailing qualifiers - existing behavior)
+        let result = parse_timecontrol("90 + 30 round2").unwrap();
+        assert_eq!(result.normalized, None);
+
+        // Verify that valid controls with digit-bearing suffixes still fail
+        let result = parse_timecontrol("15 + 10 test123").unwrap();
+        assert_eq!(result.normalized, None);
+
+        let result = parse_timecontrol("40 / 5400 + 30 : 1800 + 30 abc456").unwrap();
+        assert_eq!(result.normalized, None);
+
+        // These should succeed because non-digit suffixes are stripped
+        let result = parse_timecontrol("15 + 10 valid").unwrap();
+        assert_eq!(result.normalized, Some("900+10".to_string()));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w == "ignored_trailing_qualifier_suffix")
+        );
     }
 
     #[test]

@@ -38,6 +38,8 @@ The system SHALL interpret a limited set of common non-spec `TimeControl` shorth
 
 Any such interpretation SHALL be marked as inferred in the structured parse output.
 
+The system SHALL treat optional whitespace around structural operators (`+`, `/`, `:`) as semantically insignificant when the surrounding tokens otherwise form a valid control.
+
 #### Scenario: Interpret minute shorthand N+I as minutes+seconds
 - **WHEN** the input matches `N+I` where `I <= 60` and `N < 60` (for example `3+2`)
 - **THEN** the normalized output equals `<N*60>+<I>` (for example `180+2`)
@@ -62,9 +64,17 @@ Any such interpretation SHALL be marked as inferred in the structured parse outp
 - **WHEN** the input is surrounded by quotes (for example `"180+2"`)
 - **THEN** the normalized output equals `180+2`
 
-#### Scenario: Normalize spaces around operators
+#### Scenario: Normalize spaces around plus operator
 - **WHEN** the input is `15 + 10`
 - **THEN** the normalized output equals `900+10`
+
+#### Scenario: Normalize spaces around slash and colon operators in staged control
+- **WHEN** the input is `40 / 5400 + 30 : 1800 + 30`
+- **THEN** the normalized output equals `40/5400+30:1800+30`
+
+#### Scenario: Normalize mixed operator whitespace in stage-by-moves shorthand
+- **WHEN** the input is `90 + 30 / 30 + 30`
+- **THEN** the normalized output equals `5400+30:1800+30`
 
 #### Scenario: Normalize apostrophe minute/second notation
 - **WHEN** the input is `10'+5''`
@@ -276,3 +286,33 @@ The project SHALL document practical SQL patterns for materializing analytics-re
 #### Scenario: NULL-safe materialization guidance
 - **WHEN** users materialize TimeControl-derived columns at scale
 - **THEN** examples include NULL handling for missing/unparseable values so analytic semantics stay deterministic
+
+### Requirement: TimeControl quote preprocessing SHALL preserve structural semantics
+The system SHALL preprocess quote characters in raw `TimeControl` values using context-aware rules so that non-semantic wrappers are removed while structural numeric/operator content and apostrophe unit markers remain intact.
+
+#### Scenario: Normalize mixed wrapper quotes around canonical value
+- **WHEN** the input is `'"180+2"'`
+- **THEN** the normalized output equals `180+2`
+
+#### Scenario: Preserve apostrophe unit notation during quote cleanup
+- **WHEN** the input is `3' + 2''`
+- **THEN** the normalized output equals `180+2`
+
+#### Scenario: Normalize repeated outer quote noise around minute shorthand
+- **WHEN** the input is `''"15 + 10"''`
+- **THEN** the normalized output equals `900+10`
+
+### Requirement: Ambiguous quoted residue SHALL degrade safely
+If quote preprocessing cannot produce an unambiguous structural token stream, the system MUST fail normalization safely instead of inferring stitched numeric values.
+
+#### Scenario: Unbalanced quoted fragment returns NULL
+- **WHEN** the input is `"90 + "30`
+- **THEN** the normalized output is NULL
+
+#### Scenario: Category output follows safe failure on ambiguous quotes
+- **WHEN** the input is `"90 + "30`
+- **THEN** `chess_timecontrol_category(...)` returns NULL
+
+#### Scenario: JSON output exposes failed normalization on ambiguous quotes
+- **WHEN** the input is `"90 + "30`
+- **THEN** `chess_timecontrol_json(...)` includes `"normalized": null`
