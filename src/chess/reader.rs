@@ -17,7 +17,7 @@ use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::os::raw::c_void;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 #[repr(C)]
@@ -274,6 +274,42 @@ fn open_input_stream(path: &PathBuf, compression: CompressionMode) -> Result<Pgn
     }
 }
 
+fn collect_glob_paths<I, E, F>(pattern: &str, entries: I, mut warn: F) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = Result<PathBuf, E>>,
+    E: std::fmt::Display,
+    F: FnMut(String),
+{
+    let mut paths = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(path) => paths.push(path),
+            Err(error) => warn(format!(
+                "Skipping glob entry for pattern '{}': {}",
+                pattern, error
+            )),
+        }
+    }
+
+    paths
+}
+
+fn lock_shared_state<'a>(
+    state: &'a Mutex<SharedState>,
+    context: &str,
+) -> MutexGuard<'a, SharedState> {
+    match state.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn(format!(
+                "Shared reader state mutex poisoned while {}; recovering",
+                context
+            ));
+            poisoned.into_inner()
+        }
+    }
+}
+
 fn sanitize_for_cstring<'a>(
     value: &'a str,
     field_name: &str,
@@ -493,7 +529,7 @@ fn acquire_reader(
 ) -> Result<Option<PgnReaderState>, Box<dyn std::error::Error>> {
     loop {
         let path_idx = {
-            let mut state = init_data.state.lock().unwrap();
+            let mut state = lock_shared_state(&init_data.state, "acquiring reader");
 
             if let Some(reader) = state.available_readers.pop() {
                 return Ok(Some(reader));
@@ -572,7 +608,7 @@ fn finalize_chunk(
     chunk_writer: &mut ChunkWriter<'_>,
 ) {
     if let Some(reader) = current_reader_state {
-        let mut state = init_data.state.lock().unwrap();
+        let mut state = lock_shared_state(&init_data.state, "finalizing chunk");
         state.available_readers.push(reader);
     }
 
@@ -591,9 +627,8 @@ impl VTab for ReadPgnVTab {
         // Expand glob pattern to get list of files (single file or glob pattern)
         let paths: Vec<PathBuf> = if pattern.contains('*') || pattern.contains('?') {
             // It's a glob pattern
-            glob::glob(&pattern)?
-                .filter_map(|entry| entry.ok())
-                .collect()
+            let entries = glob::glob(&pattern)?;
+            collect_glob_paths(&pattern, entries, log::warn)
         } else {
             // It's a single file path
             vec![PathBuf::from(pattern)]
@@ -675,6 +710,7 @@ impl VTab for ReadPgnVTab {
 mod tests {
     use super::*;
 
+    use std::panic::{self, AssertUnwindSafe};
     use std::path::PathBuf;
 
     fn days_from_civil(year: i32, month: u32, day: u32) -> i32 {
@@ -723,6 +759,95 @@ mod tests {
         };
         assert_eq!(init_data.state.lock().unwrap().next_path_idx, 0);
         assert!(init_data.state.lock().unwrap().available_readers.is_empty());
+    }
+
+    #[test]
+    fn test_collect_glob_paths_keeps_valid_paths_and_records_entry_errors() {
+        let entries = vec![
+            Ok(PathBuf::from("good-1.pgn")),
+            Err("permission denied"),
+            Ok(PathBuf::from("good-2.pgn")),
+        ];
+        let mut warnings = Vec::new();
+
+        let paths = collect_glob_paths("fixtures/*.pgn", entries, |warning| warnings.push(warning));
+
+        assert_eq!(
+            paths,
+            vec![PathBuf::from("good-1.pgn"), PathBuf::from("good-2.pgn")]
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("Skipping glob entry for pattern 'fixtures/*.pgn'"));
+        assert!(warnings[0].contains("permission denied"));
+    }
+
+    #[test]
+    fn test_acquire_reader_single_missing_path_fails_hard() {
+        let init_data = ReadPgnInitData {
+            state: Mutex::new(SharedState {
+                next_path_idx: 0,
+                available_readers: Vec::new(),
+            }),
+        };
+        let bind_data = ReadPgnBindData {
+            paths: vec![PathBuf::from("test/pgn_files/definitely-missing-file.pgn")],
+            compression: CompressionMode::Plain,
+        };
+
+        let err = match acquire_reader(&init_data, &bind_data) {
+            Ok(_) => panic!("single missing file should fail hard"),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(err.contains("Failed to open file"));
+        assert!(err.contains("definitely-missing-file.pgn"));
+    }
+
+    #[test]
+    fn test_acquire_reader_glob_style_paths_skip_unreadable_entries() {
+        let init_data = ReadPgnInitData {
+            state: Mutex::new(SharedState {
+                next_path_idx: 0,
+                available_readers: Vec::new(),
+            }),
+        };
+        let bind_data = ReadPgnBindData {
+            paths: vec![
+                PathBuf::from("test/pgn_files/definitely-missing-file.pgn"),
+                PathBuf::from("test/pgn_files/sample.pgn"),
+            ],
+            compression: CompressionMode::Plain,
+        };
+
+        let reader = acquire_reader(&init_data, &bind_data)
+            .expect("multi-path acquisition should continue on unreadable entry")
+            .expect("expected a reader for the readable path");
+
+        assert_eq!(reader.path_idx, 1);
+    }
+
+    #[test]
+    fn test_acquire_reader_recovers_from_poisoned_mutex() {
+        let state = Mutex::new(SharedState {
+            next_path_idx: 0,
+            available_readers: Vec::new(),
+        });
+
+        let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+            let _guard = state.lock().expect("pre-poison lock should succeed");
+            panic!("intentional panic to poison mutex");
+        }));
+        assert!(state.is_poisoned());
+
+        let init_data = ReadPgnInitData { state };
+        let bind_data = ReadPgnBindData {
+            paths: Vec::new(),
+            compression: CompressionMode::Plain,
+        };
+
+        let result = acquire_reader(&init_data, &bind_data)
+            .expect("poisoned mutex should be handled without panic");
+        assert!(result.is_none());
     }
 
     #[test]

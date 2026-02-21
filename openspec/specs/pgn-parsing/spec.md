@@ -12,10 +12,16 @@ The system SHALL provide a `read_pgn(path_pattern, compression := NULL)` table f
 
 #### Scenario: Glob pattern parsing
 - **WHEN** user calls `read_pgn('path/*.pgn')` with a glob pattern
-- **THEN** the function expands the pattern, reads all matching files, and returns combined game data from all files
+- **THEN** the function expands the pattern, reads all readable matching files, and returns combined game data from successfully opened files
+- **AND** unreadable files are skipped with warning output
 
-#### Scenario: Empty result for non-existent files
-- **WHEN** user calls `read_pgn('nonexistent.pgn')` with a path that doesn't exist
+#### Scenario: Glob entry iteration error is observable
+- **WHEN** glob expansion yields an entry-level iteration error
+- **THEN** the function logs a warning that includes the entry failure context
+- **AND** ingestion continues for remaining entries
+
+#### Scenario: Explicit file open failure is hard error
+- **WHEN** user calls `read_pgn('nonexistent.pgn')` with a single explicit path that cannot be opened
 - **THEN** the function returns an error indicating the file could not be opened
 
 #### Scenario: Explicit NULL compression uses plain input mode
@@ -30,7 +36,8 @@ The system SHALL provide a `read_pgn(path_pattern, compression := NULL)` table f
 
 #### Scenario: Zstd-compressed glob parsing
 - **WHEN** user calls `read_pgn('path/*.pgn.zst', compression := 'zstd')` with a glob pattern
-- **THEN** the function expands the pattern, streams decompression for each matching file, and returns combined game data from all files
+- **THEN** the function expands the pattern, streams decompression for each readable matching file, and returns combined game data from successfully opened files
+- **AND** unreadable files are skipped with warning output
 
 #### Scenario: Unsupported compression value
 - **WHEN** user calls `read_pgn('path/to/file.pgn', compression := 'gzip')`
@@ -115,11 +122,16 @@ The system SHALL output parsed games in chunks to manage memory efficiently for 
 - **THEN** the function outputs all games in a single chunk
 
 ### Requirement: Thread Safety
-The system SHALL ensure thread-safe access to shared parsing state across multiple table function calls.
+The system SHALL ensure thread-safe access to shared parsing state across multiple table function calls, including non-panicking behavior when synchronization primitives are poisoned.
 
 #### Scenario: Shared state synchronization
 - **WHEN** multiple DuckDB threads access the table function
 - **THEN** a mutex-protected shared reader state coordinates path assignment and reusable per-file readers safely across threads
+
+#### Scenario: Poisoned lock in runtime reader path
+- **WHEN** runtime reader code encounters a poisoned mutex while acquiring shared state
+- **THEN** the code path does not panic
+- **AND** it recovers safely or returns a structured error consistent with existing single-file versus glob-mode handling
 
 ### Requirement: Streaming parser integration
 The system SHALL use a streaming PGN parser integration to process games incrementally from file handles, without materializing whole files in memory and without adding redundant buffering layers.
