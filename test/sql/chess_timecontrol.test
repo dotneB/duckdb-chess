@@ -405,3 +405,72 @@ query I
 SELECT chess_timecontrol_json('3+2') LIKE '%warnings%';
 ----
 true
+
+# Test overflow scenarios
+# Overflow normalization returns NULL
+query I
+SELECT chess_timecontrol_normalize('G71582789');
+----
+NULL
+
+# Overflow category returns NULL
+query I
+SELECT chess_timecontrol_category('G71582789');
+----
+NULL
+
+# Overflow JSON includes warning and null normalized
+query I
+SELECT chess_timecontrol_json('G71582789') LIKE '%inference_arithmetic_overflow%';
+----
+true
+
+query I
+SELECT chess_timecontrol_json('G71582789') LIKE '%"normalized":null%';
+----
+true
+
+query I
+SELECT json_extract(chess_timecontrol_json('G71582789')::JSON, '$.periods[0].base')::INTEGER;
+----
+NULL
+
+# Boundary case - just under limit should work
+# 71582788 mins * 60 = 4294967280 < u32::MAX
+query I
+SELECT chess_timecontrol_normalize('G71582788');
+----
+4294967280
+
+# Non-overflow values still work correctly
+query I
+SELECT chess_timecontrol_normalize('3+2');
+----
+180+2
+
+query I
+SELECT chess_timecontrol_category('3+2');
+----
+blitz
+
+query I
+SELECT chess_timecontrol_json('3+2') LIKE '%"normalized":"180+2"%';
+----
+true
+
+# Compact minute+second overflow
+query I
+SELECT chess_timecontrol_normalize('71582789 mins + 30 seconds');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_json('71582789 mins + 30 seconds') LIKE '%inference_arithmetic_overflow%';
+----
+true
+
+# Clock style overflow
+query I
+SELECT chess_timecontrol_normalize('1193047:00 + 30 sec');
+----
+NULL

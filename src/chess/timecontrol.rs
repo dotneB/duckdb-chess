@@ -174,6 +174,7 @@ impl VScalar for ChessTimecontrolJsonScalar {
                         mode: Mode::Unknown,
                         warnings: vec!["parse_error".to_string()],
                         inferred: false,
+                        overflow: false,
                     };
                     timecontrol_to_json(&parsed)
                 }
@@ -240,6 +241,7 @@ pub struct ParsedTimeControl {
     pub mode: Mode,
     pub warnings: Vec<String>,
     pub inferred: bool,
+    pub overflow: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +259,22 @@ impl Error for TimeControlError {}
 
 fn parse_u32(s: &str) -> Option<u32> {
     s.parse().ok()
+}
+
+const OVERFLOW_WARNING: &str = "inference_arithmetic_overflow";
+
+fn checked_minutes_to_seconds(minutes: u32) -> Option<u32> {
+    minutes.checked_mul(60)
+}
+
+fn checked_compose_base_increment(base_seconds: u32, inc_seconds: u32) -> Option<u32> {
+    base_seconds.checked_add(inc_seconds)
+}
+
+fn checked_hours_minutes_to_seconds(hours: u32, minutes: u32) -> Option<u32> {
+    let hours_seconds = hours.checked_mul(3600)?;
+    let minutes_seconds = minutes.checked_mul(60)?;
+    hours_seconds.checked_add(minutes_seconds)
 }
 
 fn with_original_raw(
@@ -315,6 +333,7 @@ pub fn parse_timecontrol(raw: &str) -> Result<ParsedTimeControl, TimeControlErro
         mode: Mode::Unknown,
         warnings,
         inferred: false,
+        overflow: false,
     })
 }
 
@@ -420,6 +439,7 @@ fn try_strict_parse(
             mode: Mode::Unknown,
             warnings: warnings.clone(),
             inferred: false,
+            overflow: false,
         }));
     }
 
@@ -431,6 +451,7 @@ fn try_strict_parse(
             mode: Mode::Unlimited,
             warnings: warnings.clone(),
             inferred: false,
+            overflow: false,
         }));
     }
 
@@ -448,6 +469,7 @@ fn try_strict_parse(
             mode: Mode::Sandclock,
             warnings: warnings.clone(),
             inferred: false,
+            overflow: false,
         }));
     }
 
@@ -479,6 +501,7 @@ fn try_strict_parse(
                 mode: Mode::Normal,
                 warnings: warnings.clone(),
                 inferred: false,
+                overflow: false,
             }));
         }
     }
@@ -495,6 +518,7 @@ fn try_strict_parse(
             mode: Mode::Normal,
             warnings: warnings.clone(),
             inferred: false,
+            overflow: false,
         }));
     }
 
@@ -607,37 +631,37 @@ fn try_inference(
             && let (Some(base), Some(inc)) = (parse_u32(parts[0]), parse_u32(parts[1]))
         {
             if base < 60 && inc <= 60 {
-                let normalized = format!("{}+{}", base * 60, inc);
+                let base_seconds = checked_minutes_to_seconds(base);
+                let overflow = base_seconds.is_none();
+                let base_seconds = base_seconds.unwrap_or(0);
                 warnings.push("interpreted_small_base_as_minutes".to_string());
-                return Some(Ok(ParsedTimeControl {
-                    raw: input.to_string(),
-                    normalized: Some(normalized),
-                    periods: vec![Period {
+                return Some(Ok(inferred_parsed(
+                    input,
+                    warnings,
+                    vec![Period {
                         moves: None,
-                        base_seconds: base * 60,
+                        base_seconds,
                         increment_seconds: Some(inc),
                     }],
-                    mode: Mode::Normal,
-                    warnings: warnings.to_owned(),
-                    inferred: true,
-                }));
+                    overflow,
+                )));
             }
 
             if (base == 75 || base == 90) && inc == 30 {
-                let normalized = format!("{}+{}", base * 60, inc);
+                let base_seconds = checked_minutes_to_seconds(base);
+                let overflow = base_seconds.is_none();
+                let base_seconds = base_seconds.unwrap_or(0);
                 warnings.push("interpreted_classical_75_90_as_minutes".to_string());
-                return Some(Ok(ParsedTimeControl {
-                    raw: input.to_string(),
-                    normalized: Some(normalized),
-                    periods: vec![Period {
+                return Some(Ok(inferred_parsed(
+                    input,
+                    warnings,
+                    vec![Period {
                         moves: None,
-                        base_seconds: base * 60,
+                        base_seconds,
                         increment_seconds: Some(inc),
                     }],
-                    mode: Mode::Normal,
-                    warnings: warnings.to_owned(),
-                    inferred: true,
-                }));
+                    overflow,
+                )));
             }
         }
     }
@@ -648,20 +672,20 @@ fn try_inference(
         && let Some(n) = parse_u32(input)
         && n < 60
     {
-        let normalized = (n * 60).to_string();
+        let base_seconds = checked_minutes_to_seconds(n);
+        let overflow = base_seconds.is_none();
+        let base_seconds = base_seconds.unwrap_or(0);
         warnings.push("interpreted_small_bare_number_as_minutes".to_string());
-        return Some(Ok(ParsedTimeControl {
-            raw: input.to_string(),
-            normalized: Some(normalized),
-            periods: vec![Period {
+        return Some(Ok(inferred_parsed(
+            input,
+            warnings,
+            vec![Period {
                 moves: None,
-                base_seconds: n * 60,
+                base_seconds,
                 increment_seconds: None,
             }],
-            mode: Mode::Normal,
-            warnings: warnings.to_owned(),
-            inferred: true,
-        }));
+            overflow,
+        )));
     }
 
     None
@@ -704,45 +728,60 @@ fn try_g_prefix_shorthand(
         let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
         let increment = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok());
 
-        let base_seconds = base_mins * 60;
-        let normalized = match increment {
-            Some(inc) => format!("{}+{}", base_seconds, inc),
-            None => base_seconds.to_string(),
-        };
+        let base_seconds = checked_minutes_to_seconds(base_mins);
+        let overflow = base_seconds.is_none();
+        let base_seconds = base_seconds.unwrap_or(0);
 
         warnings.push("interpreted_g_prefix_as_minutes".to_string());
 
-        return Some(Ok(ParsedTimeControl {
-            raw: input.to_string(),
-            normalized: Some(normalized),
-            periods: vec![Period {
+        return Some(Ok(inferred_parsed(
+            input,
+            warnings,
+            vec![Period {
                 moves: None,
                 base_seconds,
                 increment_seconds: increment,
             }],
-            mode: Mode::Normal,
-            warnings: warnings.to_owned(),
-            inferred: true,
-        }));
+            overflow,
+        )));
     }
 
     None
 }
 
-fn inferred_parsed(input: &str, warnings: &[String], periods: Vec<Period>) -> ParsedTimeControl {
-    let normalized = periods
-        .iter()
-        .map(format_period)
-        .collect::<Vec<_>>()
-        .join(":");
+fn inferred_parsed(
+    input: &str,
+    warnings: &mut Vec<String>,
+    periods: Vec<Period>,
+    overflow: bool,
+) -> ParsedTimeControl {
+    if overflow {
+        warnings.push(OVERFLOW_WARNING.to_string());
+        ParsedTimeControl {
+            raw: input.to_string(),
+            normalized: None,
+            periods: Vec::new(),
+            mode: Mode::Normal,
+            warnings: warnings.to_vec(),
+            inferred: true,
+            overflow: true,
+        }
+    } else {
+        let normalized = periods
+            .iter()
+            .map(format_period)
+            .collect::<Vec<_>>()
+            .join(":");
 
-    ParsedTimeControl {
-        raw: input.to_string(),
-        normalized: Some(normalized),
-        periods,
-        mode: Mode::Normal,
-        warnings: warnings.to_vec(),
-        inferred: true,
+        ParsedTimeControl {
+            raw: input.to_string(),
+            normalized: Some(normalized),
+            periods,
+            mode: Mode::Normal,
+            warnings: warnings.to_vec(),
+            inferred: true,
+            overflow: false,
+        }
     }
 }
 
@@ -755,15 +794,20 @@ fn try_apostrophe_per_move_shorthand(
     let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let inc_secs = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
 
+    let base_seconds = checked_minutes_to_seconds(base_mins);
+    let overflow = base_seconds.is_none();
+    let base_seconds = base_seconds.unwrap_or(0);
+
     warnings.push("interpreted_apostrophe_per_move_suffix".to_string());
     Some(Ok(inferred_parsed(
         input,
         warnings,
         vec![Period {
             moves: None,
-            base_seconds: base_mins * 60,
+            base_seconds,
             increment_seconds: Some(inc_secs),
         }],
+        overflow,
     )))
 }
 
@@ -776,15 +820,20 @@ fn try_compact_minute_second_increment(
     let base_mins = caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let inc_secs = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
 
+    let base_seconds = checked_minutes_to_seconds(base_mins);
+    let overflow = base_seconds.is_none();
+    let base_seconds = base_seconds.unwrap_or(0);
+
     warnings.push("interpreted_compact_minute_second_increment".to_string());
     Some(Ok(inferred_parsed(
         input,
         warnings,
         vec![Period {
             moves: None,
-            base_seconds: base_mins * 60,
+            base_seconds,
             increment_seconds: Some(inc_secs),
         }],
+        overflow,
     )))
 }
 
@@ -799,7 +848,10 @@ fn try_clock_style_increment(
     let minutes = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let inc_secs = caps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())?;
 
-    let base_seconds = hours * 3600 + minutes * 60;
+    let base_seconds = checked_hours_minutes_to_seconds(hours, minutes);
+    let overflow = base_seconds.is_none();
+    let base_seconds = base_seconds.unwrap_or(0);
+
     warnings.push("interpreted_clock_style_base".to_string());
     Some(Ok(inferred_parsed(
         input,
@@ -809,6 +861,7 @@ fn try_clock_style_increment(
             base_seconds,
             increment_seconds: Some(inc_secs),
         }],
+        overflow,
     )))
 }
 
@@ -839,21 +892,28 @@ fn try_compact_fide_apostrophe_shorthand(
     let (base_mins, moves, rest_mins, inc_secs) = parse_compact_fide_caps(&caps)?;
     warnings.push(warning_code.to_string());
 
+    let base_seconds = checked_minutes_to_seconds(base_mins);
+    let rest_seconds = checked_minutes_to_seconds(rest_mins);
+    let overflow = base_seconds.is_none() || rest_seconds.is_none();
+    let base_seconds = base_seconds.unwrap_or(0);
+    let rest_seconds = rest_seconds.unwrap_or(0);
+
     Some(Ok(inferred_parsed(
         input,
         warnings,
         vec![
             Period {
                 moves: Some(moves),
-                base_seconds: base_mins * 60,
+                base_seconds,
                 increment_seconds: Some(inc_secs),
             },
             Period {
                 moves: None,
-                base_seconds: rest_mins * 60,
+                base_seconds: rest_seconds,
                 increment_seconds: Some(inc_secs),
             },
         ],
+        overflow,
     )))
 }
 
@@ -868,6 +928,12 @@ fn try_fide_additional_wording(
     let inc_secs = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let rest_mins = caps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())?;
 
+    let base_seconds = checked_minutes_to_seconds(base_mins);
+    let rest_seconds = checked_minutes_to_seconds(rest_mins);
+    let overflow = base_seconds.is_none() || rest_seconds.is_none();
+    let base_seconds = base_seconds.unwrap_or(0);
+    let rest_seconds = rest_seconds.unwrap_or(0);
+
     warnings.push("interpreted_fide_additional_wording".to_string());
     Some(Ok(inferred_parsed(
         input,
@@ -875,15 +941,16 @@ fn try_fide_additional_wording(
         vec![
             Period {
                 moves: Some(40),
-                base_seconds: base_mins * 60,
+                base_seconds,
                 increment_seconds: Some(inc_secs),
             },
             Period {
                 moves: None,
-                base_seconds: rest_mins * 60,
+                base_seconds: rest_seconds,
                 increment_seconds: Some(inc_secs),
             },
         ],
+        overflow,
     )))
 }
 
@@ -898,6 +965,12 @@ fn try_compact_fide_triple_plus(
     let rest_mins = caps.get(2).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let inc_secs = caps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())?;
 
+    let base_seconds = checked_minutes_to_seconds(base_mins);
+    let rest_seconds = checked_minutes_to_seconds(rest_mins);
+    let overflow = base_seconds.is_none() || rest_seconds.is_none();
+    let base_seconds = base_seconds.unwrap_or(0);
+    let rest_seconds = rest_seconds.unwrap_or(0);
+
     warnings.push("interpreted_compact_fide_triple_plus".to_string());
     Some(Ok(inferred_parsed(
         input,
@@ -905,15 +978,16 @@ fn try_compact_fide_triple_plus(
         vec![
             Period {
                 moves: Some(40),
-                base_seconds: base_mins * 60,
+                base_seconds,
                 increment_seconds: Some(inc_secs),
             },
             Period {
                 moves: None,
-                base_seconds: rest_mins * 60,
+                base_seconds: rest_seconds,
                 increment_seconds: Some(inc_secs),
             },
         ],
+        overflow,
     )))
 }
 
@@ -929,6 +1003,12 @@ fn try_two_stage_slash_shorthand(
     let second_mins = caps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())?;
     let second_inc = caps.get(4).and_then(|m| m.as_str().parse::<u32>().ok())?;
 
+    let first_seconds = checked_minutes_to_seconds(first_mins);
+    let second_seconds = checked_minutes_to_seconds(second_mins);
+    let overflow = first_seconds.is_none() || second_seconds.is_none();
+    let first_seconds = first_seconds.unwrap_or(0);
+    let second_seconds = second_seconds.unwrap_or(0);
+
     warnings.push("interpreted_two_stage_slash_shorthand".to_string());
     Some(Ok(inferred_parsed(
         input,
@@ -936,15 +1016,16 @@ fn try_two_stage_slash_shorthand(
         vec![
             Period {
                 moves: None,
-                base_seconds: first_mins * 60,
+                base_seconds: first_seconds,
                 increment_seconds: Some(first_inc),
             },
             Period {
                 moves: None,
-                base_seconds: second_mins * 60,
+                base_seconds: second_seconds,
                 increment_seconds: Some(second_inc),
             },
         ],
+        overflow,
     )))
 }
 
@@ -970,21 +1051,22 @@ fn try_apostrophe_notation(
                 parse_u32(seconds_str)?
             };
 
-            let normalized = format!("{}+{}", minutes * 60, seconds);
+            let base_seconds = checked_minutes_to_seconds(minutes);
+            let overflow = base_seconds.is_none();
+            let base_seconds = base_seconds.unwrap_or(0);
+
             warnings.push("interpreted_apostrophe_notation".to_string());
 
-            return Some(Ok(ParsedTimeControl {
-                raw: input.to_string(),
-                normalized: Some(normalized),
-                periods: vec![Period {
+            return Some(Ok(inferred_parsed(
+                input,
+                warnings,
+                vec![Period {
                     moves: None,
-                    base_seconds: minutes * 60,
+                    base_seconds,
                     increment_seconds: Some(seconds),
                 }],
-                mode: Mode::Normal,
-                warnings: warnings.to_owned(),
-                inferred: true,
-            }));
+                overflow,
+            )));
         }
 
         if let Some(seconds) = parse_u32(without_double) {
@@ -1000,6 +1082,7 @@ fn try_apostrophe_notation(
                 mode: Mode::Normal,
                 warnings: warnings.to_owned(),
                 inferred: true,
+                overflow: false,
             }));
         }
     }
@@ -1008,19 +1091,21 @@ fn try_apostrophe_notation(
         && !input.ends_with("''")
         && let Some(minutes) = parse_u32(without_single)
     {
+        let base_seconds = checked_minutes_to_seconds(minutes);
+        let overflow = base_seconds.is_none();
+        let base_seconds = base_seconds.unwrap_or(0);
+
         warnings.push("interpreted_apostrophe_notation".to_string());
-        return Some(Ok(ParsedTimeControl {
-            raw: input.to_string(),
-            normalized: Some((minutes * 60).to_string()),
-            periods: vec![Period {
+        return Some(Ok(inferred_parsed(
+            input,
+            warnings,
+            vec![Period {
                 moves: None,
-                base_seconds: minutes * 60,
+                base_seconds,
                 increment_seconds: None,
             }],
-            mode: Mode::Normal,
-            warnings: warnings.to_owned(),
-            inferred: true,
-        }));
+            overflow,
+        )));
     }
 
     None
@@ -1050,19 +1135,18 @@ fn try_free_text_templates(
         && let Some(inc_caps) = FREETEXT_INC_RE.captures(&lower)
         && let Some(inc_secs) = inc_caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok())
     {
-        let first_base = base_mins * 60;
-        let second_base = rest_mins * 60;
-        let normalized = format!(
-            "{}/{}+{}:{}+{}",
-            moves, first_base, inc_secs, second_base, inc_secs
-        );
+        let first_base = checked_minutes_to_seconds(base_mins);
+        let second_base = checked_minutes_to_seconds(rest_mins);
+        let overflow = first_base.is_none() || second_base.is_none();
+        let first_base = first_base.unwrap_or(0);
+        let second_base = second_base.unwrap_or(0);
 
         warnings.push("matched_free_text_template_fide_classical".to_string());
 
-        return Some(Ok(ParsedTimeControl {
-            raw: input.to_string(),
-            normalized: Some(normalized),
-            periods: vec![
+        return Some(Ok(inferred_parsed(
+            input,
+            warnings,
+            vec![
                 Period {
                     moves: Some(moves),
                     base_seconds: first_base,
@@ -1074,10 +1158,8 @@ fn try_free_text_templates(
                     increment_seconds: Some(inc_secs),
                 },
             ],
-            mode: Mode::Normal,
-            warnings: warnings.to_owned(),
-            inferred: true,
-        }));
+            overflow,
+        )));
     }
 
     if lower.contains("minute")
@@ -1112,26 +1194,27 @@ fn try_free_text_templates(
         }
 
         if let Some(mins) = minutes {
-            let base = mins * 60 + seconds.unwrap_or(0);
-            let normalized = match inc {
-                Some(i) => format!("{}+{}", base, i),
-                None => base.to_string(),
+            let mins_seconds = checked_minutes_to_seconds(mins);
+            let base = match (mins_seconds, seconds) {
+                (Some(ms), Some(s)) => checked_compose_base_increment(ms, s),
+                (Some(ms), None) => Some(ms),
+                (None, _) => None,
             };
+            let overflow = base.is_none();
+            let base = base.unwrap_or(0);
 
             warnings.push("matched_free_text_template".to_string());
 
-            return Some(Ok(ParsedTimeControl {
-                raw: input.to_string(),
-                normalized: Some(normalized),
-                periods: vec![Period {
+            return Some(Ok(inferred_parsed(
+                input,
+                warnings,
+                vec![Period {
                     moves: None,
                     base_seconds: base,
                     increment_seconds: inc,
                 }],
-                mode: Mode::Normal,
-                warnings: warnings.to_owned(),
-                inferred: true,
-            }));
+                overflow,
+            )));
         }
     }
 
@@ -1146,7 +1229,7 @@ pub fn normalize_timecontrol(raw: &str) -> Option<String> {
 }
 
 pub fn category_from_parsed_timecontrol(parsed: &ParsedTimeControl) -> Option<&'static str> {
-    if parsed.mode != Mode::Normal {
+    if parsed.mode != Mode::Normal || parsed.overflow {
         return None;
     }
 
@@ -1204,13 +1287,14 @@ pub fn timecontrol_to_json(parsed: &ParsedTimeControl) -> String {
         serde_json::to_string(&parsed.warnings).unwrap_or_else(|_| "[]".to_string());
 
     format!(
-        r#"{{"raw":{},"normalized":{},"mode":"{}","periods":[{}],"warnings":{},"inferred":{}}}"#,
+        r#"{{"raw":{},"normalized":{},"mode":"{}","periods":[{}],"warnings":{},"inferred":{},"overflow":{}}}"#,
         raw_json,
         normalized_json,
         mode_str,
         periods_json.join(","),
         warnings_json,
-        if parsed.inferred { "true" } else { "false" }
+        if parsed.inferred { "true" } else { "false" },
+        if parsed.overflow { "true" } else { "false" }
     )
 }
 
@@ -1614,6 +1698,7 @@ mod tests {
             mode: Mode::Normal,
             warnings: Vec::new(),
             inferred: false,
+            overflow: false,
         };
 
         assert_eq!(category_from_parsed_timecontrol(&parsed), None);
@@ -1634,5 +1719,105 @@ mod tests {
         let result = parse_timecontrol("klassisch").unwrap();
         let json = timecontrol_to_json(&result);
         assert!(json.contains(r#""normalized":null"#));
+    }
+
+    #[test]
+    fn test_overflow_boundary_exactly_at_limit() {
+        // u32::MAX = 4294967295
+        // 4294967295 / 60 = 71582788 with remainder 15
+        // So 71582788 minutes = 4294967280 seconds, which is within limit
+        // Use G-prefix format to ensure it goes through inference path
+        let result = parse_timecontrol("G71582788").unwrap();
+        // This should NOT overflow since 71582788 * 60 = 4294967280 < 4294967295
+        assert!(!result.overflow);
+        assert!(
+            !result
+                .warnings
+                .contains(&"inference_arithmetic_overflow".to_string())
+        );
+        assert_eq!(result.normalized, Some("4294967280".to_string()));
+    }
+
+    #[test]
+    fn test_overflow_just_over_limit() {
+        // 71582789 minutes * 60 = 4294967340 > u32::MAX
+        // Use G-prefix format to ensure it goes through inference path
+        let result = parse_timecontrol("G71582789").unwrap();
+        assert!(result.overflow);
+        assert!(
+            result
+                .warnings
+                .contains(&"inference_arithmetic_overflow".to_string())
+        );
+        assert_eq!(result.normalized, None);
+        assert!(result.periods.is_empty());
+    }
+
+    #[test]
+    fn test_category_returns_none_on_overflow() {
+        let result = parse_timecontrol("G71582789").unwrap();
+        assert!(result.overflow);
+        assert_eq!(category_from_parsed_timecontrol(&result), None);
+    }
+
+    #[test]
+    fn test_json_includes_overflow_warning() {
+        let result = parse_timecontrol("G71582789").unwrap();
+        let json = timecontrol_to_json(&result);
+        assert!(json.contains("inference_arithmetic_overflow"));
+        assert!(json.contains(r#""normalized":null"#));
+        assert!(json.contains(r#""periods":[]"#));
+        assert!(json.contains(r#""overflow":true"#));
+    }
+
+    #[test]
+    fn test_non_overflow_inference_unchanged() {
+        // Small values should work exactly as before
+        let result = parse_timecontrol("3+2").unwrap();
+        assert!(!result.overflow);
+        assert_eq!(result.normalized, Some("180+2".to_string()));
+        assert!(
+            !result
+                .warnings
+                .contains(&"inference_arithmetic_overflow".to_string())
+        );
+        assert_eq!(categorize_timecontrol("3+2"), Some("blitz"));
+    }
+
+    #[test]
+    fn test_g_prefix_overflow() {
+        let result = parse_timecontrol("G71582789").unwrap();
+        assert!(result.overflow);
+        assert!(
+            result
+                .warnings
+                .contains(&"inference_arithmetic_overflow".to_string())
+        );
+        assert_eq!(result.normalized, None);
+    }
+
+    #[test]
+    fn test_compact_minute_second_overflow() {
+        let result = parse_timecontrol("71582789 mins + 30 seconds").unwrap();
+        assert!(result.overflow);
+        assert!(
+            result
+                .warnings
+                .contains(&"inference_arithmetic_overflow".to_string())
+        );
+        assert_eq!(result.normalized, None);
+    }
+
+    #[test]
+    fn test_clock_style_overflow() {
+        // 1193047 hours * 3600 = 4294969200 > u32::MAX
+        let result = parse_timecontrol("1193047:00 + 30 sec").unwrap();
+        assert!(result.overflow);
+        assert!(
+            result
+                .warnings
+                .contains(&"inference_arithmetic_overflow".to_string())
+        );
+        assert_eq!(result.normalized, None);
     }
 }
