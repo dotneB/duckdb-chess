@@ -1,4 +1,4 @@
-use duckdb::{
+use ::duckdb::{
     Result,
     core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId},
     vscalar::{ScalarFunctionSignature, VScalar},
@@ -12,12 +12,12 @@ use std::fmt::Write;
 use std::io;
 use std::ops::ControlFlow;
 
-use super::log;
-use super::scalar::{
+use super::duckdb_impl::scalar::{
     VarcharNullBehavior, VarcharOutput, invoke_binary_varchar_varchar_to_bool_nullable,
     invoke_unary_varchar_optional_i64_to_varchar, invoke_unary_varchar_to_i64_default,
     invoke_unary_varchar_to_u64_nullable, invoke_unary_varchar_to_varchar,
 };
+use super::log;
 use crate::chess::filter::parse_movetext_mainline;
 use crate::pgn_visitor_skip_variations;
 

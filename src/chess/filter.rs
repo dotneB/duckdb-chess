@@ -1,4 +1,6 @@
-use super::scalar::{VarcharNullBehavior, VarcharOutput, invoke_unary_varchar_to_varchar};
+use super::duckdb_impl::scalar::{
+    VarcharNullBehavior, VarcharOutput, invoke_unary_varchar_to_varchar,
+};
 use duckdb::{
     core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId},
     vscalar::{ScalarFunctionSignature, VScalar},

@@ -1,5 +1,5 @@
-use duckdb::vtab::arrow::WritableVector;
-use duckdb::{
+use ::duckdb::vtab::arrow::WritableVector;
+use ::duckdb::{
     Result,
     core::{DataChunkHandle, LogicalTypeHandle, LogicalTypeId},
     vscalar::{ScalarFunctionSignature, VScalar},
@@ -7,7 +7,9 @@ use duckdb::{
 use std::error::Error;
 use std::sync::LazyLock;
 
-use super::scalar::{VarcharNullBehavior, VarcharOutput, invoke_unary_varchar_to_varchar};
+use super::duckdb_impl::scalar::{
+    VarcharNullBehavior, VarcharOutput, invoke_unary_varchar_to_varchar,
+};
 
 static TRAILING_QUALIFIER_SUFFIX_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"^(.+?)\s+(\p{L}+)$").expect("valid trailing qualifier suffix regex")

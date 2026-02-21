@@ -23,7 +23,7 @@ use duckdb::{
 };
 use libduckdb_sys::duckdb_string_t;
 
-use super::duckdb_string::decode_duckdb_string;
+use super::string::decode_duckdb_string;
 
 #[derive(Debug, Clone, Copy)]
 pub enum VarcharNullBehavior {

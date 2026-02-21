@@ -1,17 +1,17 @@
-mod duckdb_string;
+#[path = "duckdb/mod.rs"]
+mod duckdb_impl;
 mod error;
 mod filter;
 mod log;
 mod moves;
 mod reader;
-mod scalar;
 mod timecontrol;
 mod types;
 mod visitor;
 
 pub use error::ErrorAccumulator;
 
-use duckdb::{Connection, Result};
+use ::duckdb::{Connection, Result};
 use duckdb_ext_macros::duckdb_extension;
 use filter::ChessMovesNormalizeScalar;
 use moves::{

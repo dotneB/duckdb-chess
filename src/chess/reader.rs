@@ -1,4 +1,5 @@
 use super::{
+    duckdb_impl::bind_info_ffi::{self, NamedParameterVarchar},
     log,
     types::GameRecord,
     visitor::{PgnInput, PgnReaderState, SharedState},
@@ -8,14 +9,10 @@ use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     vtab::{BindInfo, InitInfo, TableFunctionInfo, VTab},
 };
-use libduckdb_sys::{
-    duckdb_bind_get_named_parameter, duckdb_bind_info, duckdb_date, duckdb_destroy_value,
-    duckdb_free, duckdb_get_varchar, duckdb_is_null_value, duckdb_time_tz,
-};
+use libduckdb_sys::{duckdb_date, duckdb_time_tz};
 use std::borrow::Cow;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::fs::File;
-use std::os::raw::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use zstd::stream::read::Decoder as ZstdDecoder;
@@ -200,9 +197,16 @@ impl CompressionMode {
 fn resolve_compression_mode(
     bind: &BindInfo,
 ) -> Result<CompressionMode, Box<dyn std::error::Error>> {
-    match get_named_parameter_varchar(bind, "compression")? {
-        None | Some(None) => Ok(CompressionMode::Plain),
-        Some(Some(raw)) => {
+    let compression = bind_info_ffi::get_named_parameter_varchar(bind, "compression")?;
+    resolve_compression_mode_from_named_parameter(compression)
+}
+
+fn resolve_compression_mode_from_named_parameter(
+    compression: NamedParameterVarchar,
+) -> Result<CompressionMode, Box<dyn std::error::Error>> {
+    match compression {
+        NamedParameterVarchar::Missing | NamedParameterVarchar::Null => Ok(CompressionMode::Plain),
+        NamedParameterVarchar::Value(raw) => {
             let normalized = raw.trim();
             if normalized.eq_ignore_ascii_case("null") {
                 Ok(CompressionMode::Plain)
@@ -211,49 +215,6 @@ fn resolve_compression_mode(
             }
         }
     }
-}
-
-fn bind_info_ptr(bind: &BindInfo) -> duckdb_bind_info {
-    // SAFETY: `duckdb::vtab::BindInfo` is a thin wrapper around `duckdb_bind_info`
-    // in duckdb-rs 1.4.4. We only read the wrapped pointer for C API interop.
-    unsafe { *(bind as *const BindInfo as *const duckdb_bind_info) }
-}
-
-fn get_named_parameter_varchar(
-    bind: &BindInfo,
-    name: &str,
-) -> Result<Option<Option<String>>, Box<dyn std::error::Error>> {
-    let name_cstr = CString::new(name)?;
-
-    // SAFETY: `bind_info_ptr` returns the C bind pointer owned by DuckDB for this bind call.
-    let mut value =
-        unsafe { duckdb_bind_get_named_parameter(bind_info_ptr(bind), name_cstr.as_ptr()) };
-    if value.is_null() {
-        return Ok(None);
-    }
-
-    // SAFETY: `value` is a valid duckdb_value returned by DuckDB and must be destroyed once.
-    let result = unsafe {
-        if duckdb_is_null_value(value) {
-            Ok(Some(None))
-        } else {
-            let varchar = duckdb_get_varchar(value);
-            if varchar.is_null() {
-                Err(format!("Failed to read named parameter '{}' as VARCHAR", name).into())
-            } else {
-                let text = CStr::from_ptr(varchar).to_string_lossy().into_owned();
-                duckdb_free(varchar as *mut c_void);
-                Ok(Some(Some(text)))
-            }
-        }
-    };
-
-    // SAFETY: `value` has not been destroyed yet and must be released now.
-    unsafe {
-        duckdb_destroy_value(&mut value);
-    }
-
-    result
 }
 
 fn open_input_stream(path: &PathBuf, compression: CompressionMode) -> Result<PgnInput, String> {
@@ -923,6 +884,48 @@ mod tests {
     #[test]
     fn test_parse_compression_mode_rejects_unsupported_value() {
         let err = CompressionMode::parse("gzip").unwrap_err().to_string();
+        assert!(err.contains("Invalid compression value 'gzip'"));
+    }
+
+    #[test]
+    fn test_resolve_compression_mode_missing_named_parameter_defaults_plain() {
+        let mode = resolve_compression_mode_from_named_parameter(NamedParameterVarchar::Missing)
+            .expect("missing named parameter should default to plain mode");
+        assert_eq!(mode, CompressionMode::Plain);
+    }
+
+    #[test]
+    fn test_resolve_compression_mode_null_named_parameter_defaults_plain() {
+        let mode = resolve_compression_mode_from_named_parameter(NamedParameterVarchar::Null)
+            .expect("NULL named parameter should default to plain mode");
+        assert_eq!(mode, CompressionMode::Plain);
+    }
+
+    #[test]
+    fn test_resolve_compression_mode_zstd_named_parameter() {
+        let mode = resolve_compression_mode_from_named_parameter(NamedParameterVarchar::Value(
+            "ZsTd".to_string(),
+        ))
+        .expect("zstd named parameter should resolve to zstd mode");
+        assert_eq!(mode, CompressionMode::Zstd);
+    }
+
+    #[test]
+    fn test_resolve_compression_mode_string_null_defaults_plain() {
+        let mode = resolve_compression_mode_from_named_parameter(NamedParameterVarchar::Value(
+            " null ".to_string(),
+        ))
+        .expect("string literal null should resolve to plain mode");
+        assert_eq!(mode, CompressionMode::Plain);
+    }
+
+    #[test]
+    fn test_resolve_compression_mode_unsupported_named_parameter_value() {
+        let err = resolve_compression_mode_from_named_parameter(NamedParameterVarchar::Value(
+            "gzip".to_string(),
+        ))
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("Invalid compression value 'gzip'"));
     }
 
