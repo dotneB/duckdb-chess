@@ -1,3 +1,40 @@
+## [0.5.0] - 2026-02-21
+
+### 🚀 Features
+
+- Support for zstd compressed files
+
+### 🚜 Refactor
+
+- Cache epoch date as static
+- Use SmallVec preallocated for MoveList
+- Attempt to reduce string clones
+- Macro for visitor boilerplate
+- Consolidate error handling
+- Read-pgn vtab
+- Minor optimization read pgn allocation
+- Duckdb scalar helpers
+- Harden read_pgn runtime resilience and surface glob warnings
+- Harden inferred timecontrol overflow handling
+- Isolate bindinfo ffi boundary and regroup duckdb helpers
+- Modularize timecontrol parser into strict, inference, and json modules
+- Harden timecontrol quote preprocessing
+- Extend TimeControl normalization
+
+### 📚 Documentation
+
+- Update README.md
+
+### ⚡ Performance
+
+- Static pre-compile Regexes
+
+### ⚙️ Miscellaneous Tasks
+
+- Add support for a devcontainer
+- Update extension-ci-tools submodule
+- Zstd compiling in mingw
+
 ## [0.4.0] - 2026-02-15
 
 ### 🚀 Features
