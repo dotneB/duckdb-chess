@@ -141,6 +141,16 @@ SELECT chess_timecontrol_normalize('"180+2"');
 180+2
 
 query I
+SELECT chess_timecontrol_normalize('''"180+2"''');
+----
+180+2
+
+query I
+SELECT chess_timecontrol_normalize('''''"15 + 10"''''');
+----
+900+10
+
+query I
 SELECT chess_timecontrol_normalize('15 + 10');
 ----
 900+10
@@ -199,6 +209,11 @@ SELECT chess_timecontrol_normalize('3'' + 2''''/mv from move 1');
 180+2
 
 query I
+SELECT chess_timecontrol_normalize('3'' + 2''''');
+----
+180+2
+
+query I
 SELECT chess_timecontrol_normalize('15'' + 10''''/mv from move 1');
 ----
 900+10
@@ -230,6 +245,11 @@ SELECT chess_timecontrol_normalize('90 + 30 OFICIAL');
 
 query I
 SELECT chess_timecontrol_normalize('90 + 30 round2');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_normalize('"90 + "30');
 ----
 NULL
 
@@ -320,6 +340,11 @@ SELECT chess_timecontrol_json('klassisch') LIKE '%"normalized":null%';
 true
 
 query I
+SELECT chess_timecontrol_json('"90 + "30') LIKE '%"normalized":null%';
+----
+true
+
+query I
 SELECT chess_timecontrol_json('g60+30') LIKE '%"interpreted_g_prefix_as_minutes"%';
 ----
 true
@@ -397,6 +422,11 @@ NULL
 
 query I
 SELECT chess_timecontrol_category('klassisch');
+----
+NULL
+
+query I
+SELECT chess_timecontrol_category('"90 + "30');
 ----
 NULL
 

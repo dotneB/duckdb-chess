@@ -219,21 +219,36 @@ pub fn parse_timecontrol(raw: &str) -> Result<ParsedTimeControl, TimeControlErro
         });
     }
 
-    let (preprocessed, mut warnings) = inference::preprocess(input);
+    let preprocessed = inference::preprocess(input);
+    let mut warnings = preprocessed.warnings;
 
-    if let Some(result) = strict::try_strict_parse(&preprocessed, &mut warnings) {
+    if preprocessed.has_ambiguous_quote_residue {
+        return Ok(ParsedTimeControl {
+            raw: raw.to_string(),
+            normalized: None,
+            periods: Vec::new(),
+            mode: Mode::Unknown,
+            warnings,
+            inferred: false,
+            overflow: false,
+        });
+    }
+
+    if let Some(result) = strict::try_strict_parse(&preprocessed.normalized, &mut warnings) {
         return with_original_raw(raw, result);
     }
 
-    if let Some(result) = inference::try_inference(&preprocessed, &mut warnings) {
+    if let Some(result) = inference::try_inference(&preprocessed.normalized, &mut warnings) {
         return with_original_raw(raw, result);
     }
 
-    if let Some(result) = inference::try_free_text_templates(&preprocessed, &mut warnings) {
+    if let Some(result) =
+        inference::try_free_text_templates(&preprocessed.normalized, &mut warnings)
+    {
         return with_original_raw(raw, result);
     }
 
-    if let Some(core) = inference::strip_trailing_qualifier_suffix(&preprocessed) {
+    if let Some(core) = inference::strip_trailing_qualifier_suffix(&preprocessed.normalized) {
         let mut fallback_warnings = warnings.clone();
         fallback_warnings.push("ignored_trailing_qualifier_suffix".to_string());
 

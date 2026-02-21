@@ -149,7 +149,66 @@ pub(super) fn strip_trailing_qualifier_suffix(input: &str) -> Option<String> {
     Some(core.to_string())
 }
 
-pub(super) fn preprocess(input: &str) -> (String, Vec<String>) {
+pub(super) struct PreprocessResult {
+    pub normalized: String,
+    pub warnings: Vec<String>,
+    pub has_ambiguous_quote_residue: bool,
+}
+
+fn strip_outer_quote_wrappers(input: &str) -> (String, bool) {
+    let mut s = input.trim().to_string();
+    let mut stripped = false;
+
+    loop {
+        let mut chars = s.chars();
+        let first = chars.next();
+        let last = s.chars().next_back();
+
+        let should_strip = matches!(first, Some('\'' | '"')) && matches!(last, Some('\'' | '"'));
+        if !should_strip || s.len() < 2 {
+            break;
+        }
+
+        s = s[1..s.len() - 1].trim().to_string();
+        stripped = true;
+    }
+
+    (s, stripped)
+}
+
+fn has_ambiguous_quote_residue(input: &str) -> bool {
+    if input.contains('"') {
+        return true;
+    }
+
+    let bytes = input.as_bytes();
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        if bytes[idx] != b'\'' {
+            idx += 1;
+            continue;
+        }
+
+        let run_start = idx;
+        while idx < bytes.len() && bytes[idx] == b'\'' {
+            idx += 1;
+        }
+
+        if run_start == 0 {
+            return true;
+        }
+
+        let prev = bytes[run_start - 1] as char;
+        if !prev.is_ascii_digit() {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub(super) fn preprocess(input: &str) -> PreprocessResult {
     let mut warnings = Vec::new();
     let mut s = input.to_string();
 
@@ -160,11 +219,15 @@ pub(super) fn preprocess(input: &str) -> (String, Vec<String>) {
         warnings.push("trimmed".to_string());
     }
 
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
-        s = s[1..s.len() - 1].to_string();
-        if !s.is_empty() {
-            warnings.push("stripped_quotes".to_string());
-        }
+    let (stripped, did_strip_quotes) = strip_outer_quote_wrappers(&s);
+    s = stripped;
+    if did_strip_quotes {
+        warnings.push("stripped_quotes".to_string());
+    }
+
+    let has_ambiguous_quote_residue = has_ambiguous_quote_residue(&s);
+    if has_ambiguous_quote_residue {
+        warnings.push("ambiguous_quote_residue".to_string());
     }
 
     let original = s.clone();
@@ -209,7 +272,11 @@ pub(super) fn preprocess(input: &str) -> (String, Vec<String>) {
         }
     }
 
-    (s, warnings)
+    PreprocessResult {
+        normalized: s,
+        warnings,
+        has_ambiguous_quote_residue,
+    }
 }
 
 pub(super) fn try_inference(
@@ -865,6 +932,20 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_mixed_wrapper_quotes() {
+        let result = parse_timecontrol("'\"180+2\"'").unwrap();
+        assert_eq!(result.normalized, Some("180+2".to_string()));
+        assert!(result.warnings.iter().any(|w| w == "stripped_quotes"));
+    }
+
+    #[test]
+    fn test_normalize_repeated_outer_quote_noise_around_minute_shorthand() {
+        let result = parse_timecontrol("''\"15 + 10\"''").unwrap();
+        assert_eq!(result.normalized, Some("900+10".to_string()));
+        assert!(result.warnings.iter().any(|w| w == "stripped_quotes"));
+    }
+
+    #[test]
     fn test_normalize_spaces_around_operators() {
         let result = parse_timecontrol("15 + 10").unwrap();
         assert_eq!(result.normalized, Some("900+10".to_string()));
@@ -874,6 +955,12 @@ mod tests {
     fn test_apostrophe_notation() {
         let result = parse_timecontrol("10'+5''").unwrap();
         assert_eq!(result.normalized, Some("600+5".to_string()));
+    }
+
+    #[test]
+    fn test_apostrophe_notation_with_spaces_is_preserved() {
+        let result = parse_timecontrol("3' + 2''").unwrap();
+        assert_eq!(result.normalized, Some("180+2".to_string()));
     }
 
     #[test]
@@ -1026,6 +1113,19 @@ mod tests {
     fn test_failure_unparseable() {
         let result = parse_timecontrol("klassisch").unwrap();
         assert_eq!(result.normalized, None);
+    }
+
+    #[test]
+    fn test_unbalanced_quote_fragment_fails_safely() {
+        let result = parse_timecontrol("\"90 + \"30").unwrap();
+        assert_eq!(result.normalized, None);
+        assert_eq!(result.mode, super::super::Mode::Unknown);
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w == "ambiguous_quote_residue")
+        );
     }
 
     #[test]
