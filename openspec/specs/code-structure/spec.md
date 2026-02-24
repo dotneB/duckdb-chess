@@ -43,10 +43,10 @@ The `read_pgn` reader implementation MUST define column order, names, and DuckDB
 ### Requirement: Reader chunk writing is modularized without behavior changes
 The `read_pgn` table function MUST use dedicated helpers for reader acquisition, game parsing, row emission, and chunk finalization while preserving existing glob, compression, and `parse_error` semantics.
 
-#### Scenario: Chunk row limit uses named constant
+#### Scenario: Chunk row limit uses runtime vector capacity
 - **WHEN** `func()` fills an output chunk
-- **THEN** maximum rows per chunk is controlled by a named constant
-- **AND** the constant value is `2048`
+- **THEN** maximum rows per chunk is controlled by runtime capacity read from the output chunk vector(s)
+- **AND** chunk-full checks use that runtime value instead of a fixed `2048` contract
 
 #### Scenario: Row output uses chunk writer abstraction
 - **WHEN** a parsed game record is written to the output chunk

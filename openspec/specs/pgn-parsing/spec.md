@@ -111,15 +111,19 @@ The system SHALL maximize data recovery by outputting whatever valid information
 - **THEN** each game is output with its specific error type indicated in the parse_error column
 
 ### Requirement: Chunked Output
-The system SHALL output parsed games in chunks to manage memory efficiently for large datasets.
+The system SHALL output parsed games in chunks to manage memory efficiently for large datasets, and the maximum rows per output chunk SHALL be derived from the runtime DuckDB output vector capacity.
 
 #### Scenario: Large dataset processing
-- **WHEN** parsing results in more than 2048 games
-- **THEN** the function outputs games in chunks of up to 2048 rows per call
+- **WHEN** parsing results in more games than the current DuckDB output vector capacity
+- **THEN** the function outputs games in chunks of up to the runtime vector capacity per call
 
 #### Scenario: Small dataset processing
-- **WHEN** parsing results in fewer than 2048 games
+- **WHEN** parsing results in fewer games than the current DuckDB output vector capacity
 - **THEN** the function outputs all games in a single chunk
+
+#### Scenario: Non-default DuckDB vector size
+- **WHEN** DuckDB is configured with a vector size different from 2048
+- **THEN** `read_pgn` uses that configured runtime vector capacity as the chunk upper bound
 
 ### Requirement: Thread Safety
 The system SHALL ensure thread-safe access to shared parsing state across multiple table function calls, including non-panicking behavior when synchronization primitives are poisoned.

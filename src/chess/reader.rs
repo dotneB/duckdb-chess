@@ -11,7 +11,6 @@ use duckdb::{
 };
 use libduckdb_sys::{duckdb_date, duckdb_time_tz};
 use std::borrow::Cow;
-use std::ffi::CString;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
@@ -37,7 +36,6 @@ enum CompressionMode {
 }
 
 const PATH_PATTERN_PARAM_INDEX: u64 = 0;
-const ROWS_PER_CHUNK: usize = 2048;
 const READ_PGN_COLUMN_COUNT: usize = 18;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -271,7 +269,7 @@ fn lock_shared_state<'a>(
     }
 }
 
-fn sanitize_for_cstring<'a>(
+fn sanitize_interior_nul<'a>(
     value: &'a str,
     field_name: &str,
     parse_error: &mut ErrorAccumulator,
@@ -284,7 +282,7 @@ fn sanitize_for_cstring<'a>(
     }
 }
 
-fn sanitize_for_cstring_silent(value: &str) -> Cow<'_, str> {
+fn sanitize_interior_nul_silent(value: &str) -> Cow<'_, str> {
     if value.contains('\0') {
         Cow::Owned(value.replace('\0', " "))
     } else {
@@ -300,21 +298,24 @@ enum ReadNextGameOutcome {
 struct ChunkWriter<'a> {
     output: &'a mut DataChunkHandle,
     row_count: usize,
+    max_rows: usize,
 }
 
 impl<'a> ChunkWriter<'a> {
     fn new(output: &'a mut DataChunkHandle) -> Self {
+        let max_rows = output.flat_vector(0).capacity();
         Self {
             output,
             row_count: 0,
+            max_rows,
         }
     }
 
     fn is_full(&self) -> bool {
-        self.row_count >= ROWS_PER_CHUNK
+        self.row_count >= self.max_rows
     }
 
-    fn write_row(&mut self, game: &GameRecord) -> Result<(), Box<dyn std::error::Error>> {
+    fn write_row(&mut self, game: &GameRecord) {
         let row_idx = self.row_count;
         let mut row_parse_error = ErrorAccumulator::default();
         if let Some(parse_error) = game.parse_error.as_deref() {
@@ -326,43 +327,43 @@ impl<'a> ChunkWriter<'a> {
             row_idx,
             game.event.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_varchar(
             ReadPgnColumn::Site,
             row_idx,
             game.site.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_varchar(
             ReadPgnColumn::White,
             row_idx,
             game.white.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_varchar(
             ReadPgnColumn::Black,
             row_idx,
             game.black.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_varchar(
             ReadPgnColumn::Result,
             row_idx,
             game.result.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_varchar(
             ReadPgnColumn::WhiteTitle,
             row_idx,
             game.white_title.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_varchar(
             ReadPgnColumn::BlackTitle,
             row_idx,
             game.black_title.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_uinteger(ReadPgnColumn::WhiteElo, row_idx, game.white_elo);
         self.write_optional_uinteger(ReadPgnColumn::BlackElo, row_idx, game.black_elo);
         self.write_optional_date(ReadPgnColumn::UtcDate, row_idx, game.utc_date);
@@ -372,52 +373,51 @@ impl<'a> ChunkWriter<'a> {
             row_idx,
             game.eco.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_varchar(
             ReadPgnColumn::Opening,
             row_idx,
             game.opening.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_varchar(
             ReadPgnColumn::Termination,
             row_idx,
             game.termination.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
         self.write_optional_varchar(
             ReadPgnColumn::TimeControl,
             row_idx,
             game.time_control.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
 
-        let movetext = sanitize_for_cstring(
+        let movetext = sanitize_interior_nul(
             game.movetext.as_str(),
             ReadPgnColumn::Movetext.name(),
             &mut row_parse_error,
         );
         let movetext_vec = self.output.flat_vector(ReadPgnColumn::Movetext.index());
-        movetext_vec.insert(row_idx, CString::new(movetext.as_ref())?);
+        movetext_vec.insert(row_idx, movetext.as_ref());
 
         self.write_optional_varchar(
             ReadPgnColumn::Source,
             row_idx,
             game.source.as_deref(),
             &mut row_parse_error,
-        )?;
+        );
 
         let mut parse_error_vec = self.output.flat_vector(ReadPgnColumn::ParseError.index());
         if row_parse_error.is_empty() {
             parse_error_vec.set_null(row_idx);
         } else {
             let parse_error = row_parse_error.take().unwrap_or_default();
-            let parse_error = sanitize_for_cstring_silent(parse_error.as_str());
-            parse_error_vec.insert(row_idx, CString::new(parse_error.as_ref())?);
+            let parse_error = sanitize_interior_nul_silent(parse_error.as_str());
+            parse_error_vec.insert(row_idx, parse_error.as_ref());
         }
 
         self.row_count += 1;
-        Ok(())
     }
 
     fn set_output_len(&mut self) {
@@ -430,15 +430,14 @@ impl<'a> ChunkWriter<'a> {
         row_idx: usize,
         value: Option<&str>,
         parse_error: &mut ErrorAccumulator,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) {
         let mut vector = self.output.flat_vector(column.index());
         if let Some(value) = value {
-            let sanitized = sanitize_for_cstring(value, column.name(), parse_error);
-            vector.insert(row_idx, CString::new(sanitized.as_ref())?);
+            let sanitized = sanitize_interior_nul(value, column.name(), parse_error);
+            vector.insert(row_idx, sanitized.as_ref());
         } else {
             vector.set_null(row_idx);
         }
-        Ok(())
     }
 
     fn write_optional_uinteger(
@@ -556,10 +555,7 @@ fn read_next_game(reader: &mut PgnReaderState, source_path: &Path) -> ReadNextGa
     }
 }
 
-fn write_row(
-    chunk_writer: &mut ChunkWriter<'_>,
-    reader: &PgnReaderState,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn write_row(chunk_writer: &mut ChunkWriter<'_>, reader: &PgnReaderState) {
     chunk_writer.write_row(&reader.record_buffer)
 }
 
@@ -637,7 +633,7 @@ impl VTab for ReadPgnVTab {
                 let source_path = &bind_data.paths[reader.path_idx];
                 match read_next_game(&mut reader, source_path) {
                     ReadNextGameOutcome::GameReady => {
-                        write_row(&mut chunk_writer, &reader)?;
+                        write_row(&mut chunk_writer, &reader);
                         current_reader_state = Some(reader);
                     }
                     ReadNextGameOutcome::ReaderFinished => {
@@ -841,26 +837,40 @@ mod tests {
     }
 
     #[test]
-    fn test_rows_per_chunk_constant_matches_contract() {
-        assert_eq!(ROWS_PER_CHUNK, 2048);
-    }
-
-    #[test]
-    fn test_sanitize_for_cstring_preserves_clean_values() {
+    fn test_sanitize_interior_nul_preserves_clean_values() {
         let mut parse_error = ErrorAccumulator::default();
-        let sanitized = sanitize_for_cstring("normal text", "Event", &mut parse_error);
+        let sanitized = sanitize_interior_nul("normal text", "Event", &mut parse_error);
         assert_eq!(sanitized.as_ref(), "normal text");
         assert!(parse_error.is_empty());
     }
 
     #[test]
-    fn test_sanitize_for_cstring_replaces_interior_nul_and_records_error() {
+    fn test_sanitize_interior_nul_replaces_interior_nul_and_records_error() {
         let mut parse_error = ErrorAccumulator::default();
-        let sanitized = sanitize_for_cstring("A\0B", "Event", &mut parse_error);
+        let sanitized = sanitize_interior_nul("A\0B", "Event", &mut parse_error);
         assert_eq!(sanitized.as_ref(), "A B");
 
         let message = parse_error.take().expect("expected parse_error message");
         assert!(message.contains("Sanitized interior NUL in Event"));
+    }
+
+    #[test]
+    fn test_sanitize_interior_nul_appends_to_existing_parse_error() {
+        let mut parse_error = ErrorAccumulator::default();
+        parse_error.push("existing");
+
+        let sanitized = sanitize_interior_nul("A\0B", "Event", &mut parse_error);
+        assert_eq!(sanitized.as_ref(), "A B");
+        assert_eq!(
+            parse_error.take().as_deref(),
+            Some("existing; Sanitized interior NUL in Event")
+        );
+    }
+
+    #[test]
+    fn test_sanitize_interior_nul_silent_replaces_interior_nul() {
+        let sanitized = sanitize_interior_nul_silent("x\0y");
+        assert_eq!(sanitized.as_ref(), "x y");
     }
 
     #[test]
