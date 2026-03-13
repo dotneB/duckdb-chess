@@ -1,14 +1,14 @@
 install-tools:
   echo "Installing cargo-duckdb-ext-tools..."
-  cargo install cargo-duckdb-ext-tools --locked --git "https://github.com/dotneB/cargo-duckdb-ext-tools.git" --branch "fix/windows-build"
+  cargo binstall cargo-duckdb-ext-tools --locked
   echo "Installing duckdb-sqllogictest-rs..."
   cargo binstall duckdb-slt --locked
 
 debug:
-  cargo duckdb-ext-build
+  cargo duckdb-ext build -d v1.5.0
 
 release:
-  cargo duckdb-ext-build -- --release
+  cargo duckdb-ext build -d v1.5.0 -- --release
 
 test: debug
   echo "Running cargo tests..."
@@ -37,8 +37,8 @@ full: check test test-release
   echo "Full workflow completed."
 
 bump-duckdb version:
-  sed -i 's/duckdb = { version = "=[0-9.][0-9.]*"/duckdb = { version = "={{version}}"/' Cargo.toml
-  sed -i 's/libduckdb-sys = { version = "=[0-9.][0-9.]*"/libduckdb-sys = { version = "={{version}}"/' Cargo.toml
+  duckdb_rs_version=$(echo "{{version}}" | awk -F. '{ encoded=$1*10000 + $2*100 + $3; printf "1.%d.0\n", encoded }') && sed -i 's/duckdb = { version = "=[0-9.][0-9.]*"/duckdb = { version = "='"$duckdb_rs_version"'"/' Cargo.toml
+  duckdb_rs_version=$(echo "{{version}}" | awk -F. '{ encoded=$1*10000 + $2*100 + $3; printf "1.%d.0\n", encoded }') && sed -i 's/libduckdb-sys = { version = "=[0-9.][0-9.]*"/libduckdb-sys = { version = "='"$duckdb_rs_version"'"/' Cargo.toml
   sed -i 's/\*\*DuckDB\*\* `[0-9.][0-9.]*`/**DuckDB** `{{version}}`/' README.md
   sed -i 's/DUCKDB_VERSION: "[0-9.][0-9.]*"/DUCKDB_VERSION: "{{version}}"/' .github/workflows/ci.yml
   sed -i 's/duckdb_version: v[0-9.][0-9.]*/duckdb_version: v{{version}}/' .github/workflows/MainDistributionPipeline.yml

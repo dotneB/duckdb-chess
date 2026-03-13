@@ -14,7 +14,7 @@ if ! command -v cargo-binstall >/dev/null 2>&1; then
   cargo install cargo-binstall --locked
 fi
 
-if ! command -v cargo-duckdb-ext-build >/dev/null 2>&1 || ! command -v duckdb-slt >/dev/null 2>&1; then
+if ! command -v cargo-duckdb-ext >/dev/null 2>&1 || ! command -v duckdb-slt >/dev/null 2>&1; then
   echo "Installing project tools..."
   just install-tools
 fi

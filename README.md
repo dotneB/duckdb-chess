@@ -62,7 +62,7 @@ FROM g,
 ### Prerequisites
 
 - **Rust toolchain**: repo toolchain is `1.93` (`rust-toolchain.toml`), minimum supported Rust version for this crate (MSRV) is `1.89`
-- **DuckDB** `1.4.4`
+- **DuckDB** `1.5.0`
 - Run `just install-tools` to install:
   - **cargo-duckdb-ext-tools**: A Rust-based toolkit for building and packaging DuckDB extensions without Python dependencies
   - **duckdb-slt**: A Rust-based sqllogictest runner for DuckDB.
@@ -85,7 +85,7 @@ just test-release # (release)
 just dev # (debug)
 ```
 
-The `just` recipes call Rust-first commands (`cargo duckdb-ext-build`, `cargo test`, `cargo fmt`, `cargo clippy`).
+The `just` recipes call Rust-first commands (`cargo duckdb-ext build`, `cargo test`, `cargo fmt`, `cargo clippy`).
 
 ### Template Compatibility Note
 

@@ -11,8 +11,8 @@ Build / lint / test commands (golden paths)
 - Dev loop (lint + debug build + tests): `just dev`
 - Full loop (lint + debug build + tests + release build + tests in release): `just full`
 - Build:
-  - Debug: `just debug` (wraps `cargo duckdb-ext-build`)
-  - Release: `just release` (wraps `cargo duckdb-ext-build -- --release`)
+  - Debug: `just debug` (wraps `cargo duckdb-ext build`)
+  - Release: `just release` (wraps `cargo duckdb-ext build -- --release`)
 - Tests:
   - Debug (unit + SQLLogicTest): `just test`
   - Release (unit + SQLLogicTest): `just test-release`

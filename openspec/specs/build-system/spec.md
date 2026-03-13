@@ -6,7 +6,7 @@ To define a Rust-first build and validation workflow for this DuckDB extension w
 ### Requirement: Rust-Only Build System
 The project MUST provide a Rust-first local workflow for building, linting, and testing the extension.
 
-The primary local workflow SHALL use Rust/cargo tooling (`cargo duckdb-ext-build`, `cargo test`, `cargo fmt`, `cargo clippy`) and repository wrappers in `justfile`.
+The primary local workflow SHALL use Rust/cargo tooling (`cargo duckdb-ext build`, `cargo test`, `cargo fmt`, `cargo clippy`) and repository wrappers in `justfile`.
 
 #### Scenario: Rust-first development workflow
 - **WHEN** a contributor builds and tests locally
@@ -30,8 +30,8 @@ The project MUST use `duckdb-ext-macros` and `cargo-duckdb-ext-tools` for extens
 
 #### Scenario: Build process
 - **WHEN** building for development
-- **THEN** the workflow uses `cargo duckdb-ext-build`
-- **AND** release builds use `cargo duckdb-ext-build -- --release`
+- **THEN** the workflow uses `cargo duckdb-ext build`
+- **AND** release builds use `cargo duckdb-ext build -- --release`
 
 #### Scenario: Tool installation pin
 - **WHEN** installing extension build tooling from repository wrappers
