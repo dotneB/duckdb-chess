@@ -61,7 +61,7 @@ FROM g,
 
 ### Prerequisites
 
-- **Rust toolchain**: repo toolchain is `1.93` (`rust-toolchain.toml`), minimum supported Rust version for this crate (MSRV) is `1.89`
+- **Rust toolchain**: repo toolchain is `1.94` (`rust-toolchain.toml`), minimum supported Rust version for this crate (MSRV) is `1.89`
 - **DuckDB** `1.5.0`
 - Run `just install-tools` to install:
   - **cargo-duckdb-ext-tools**: A Rust-based toolkit for building and packaging DuckDB extensions without Python dependencies

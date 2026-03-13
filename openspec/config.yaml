@@ -7,7 +7,7 @@ context: |
   - Table function reads file paths or globs; streams PGN parsing; outputs rows in chunks (2048).
   - Malformed games: log warning and continue (do not fail entire batch).
   Tech stack:
-  - Rust: 2024 edition (Rust MSRV: 1.89.0, Toolchain: 1.93.0)
+  - Rust: 2024 edition (Rust MSRV: 1.89.0, Toolchain: 1.94)
   - DuckDB target: 1.5.0
   - Core crates: duckdb, duckdb-ext-macros, libduckdb-sys, pgn-reader, shakmaty, glob
   - DuckDB extension build: cargo-duckdb-ext-tools for extension macros, cargo-duckdb-ext-tools for packaging
