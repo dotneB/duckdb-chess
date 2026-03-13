@@ -1,3 +1,17 @@
+## [0.6.0] - 2026-03-13
+
+### 🚀 Features
+
+- Bump duckdb to 1.5.0
+
+### 🐛 Bug Fixes
+
+- Don't override duckdb defaults
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump rust toolchain to 1.94
+
 ## [0.5.0] - 2026-02-21
 
 ### 🚀 Features

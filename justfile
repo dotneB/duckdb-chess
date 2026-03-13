@@ -1,3 +1,5 @@
+DUCKDB_VERSION := "1.5.0"
+
 install-tools:
   echo "Installing cargo-duckdb-ext-tools..."
   cargo binstall cargo-duckdb-ext-tools --locked
@@ -5,10 +7,10 @@ install-tools:
   cargo binstall duckdb-slt --locked
 
 debug:
-  cargo duckdb-ext build -d v1.5.0
+  cargo duckdb-ext build -d v{{ DUCKDB_VERSION }}
 
 release:
-  cargo duckdb-ext build -d v1.5.0 -- --release
+  cargo duckdb-ext build -d v{{ DUCKDB_VERSION }} -- --release
 
 test: debug
   echo "Running cargo tests..."
@@ -45,6 +47,7 @@ bump-duckdb version:
   sed -i 's/DUCKDB_VERSION: "[0-9.][0-9.]*"/DUCKDB_VERSION: "{{version}}"/' .github/workflows/release.yml
   sed -i 's/- DuckDB target: [0-9.][0-9.]*/- DuckDB target: {{version}}/' openspec/config.yaml
   sed -i 's/TARGET_DUCKDB_VERSION=v[0-9.][0-9.]*/TARGET_DUCKDB_VERSION=v{{version}}/' Makefile
+  sed -i 's/DUCKDB_VERSION := "[0-9.][0-9.]*"/DUCKDB_VERSION := "{{version}}"/' justfile
 
 bump-msrv version:
   sed -i 's/rust-version = "[0-9.][0-9.]*"/rust-version = "{{version}}"/' Cargo.toml
