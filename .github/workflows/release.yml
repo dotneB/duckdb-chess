@@ -11,9 +11,9 @@ env:
   RUST_TOOLCHAIN: "1.94"
   RUST_MSRV: "1.89.0"
   EXTENSION_NAME: chess
-  DUCKDB_VERSION: "1.5.0"
+  DUCKDB_VERSION: "1.5.1"
   DUCKDB_EXT_TOOLS_PINNED_VERSION: "@0.5.0"
-  DUCKDB_SLT_PINNED_VERSION: "@0.1.7"
+  DUCKDB_SLT_PINNED_VERSION: "@0.1.8"
 
 jobs:
   build:
@@ -27,22 +27,22 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform: linux_amd64
-          
+
           # Linux ARM64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             platform: linux_arm64
-          
+
           # macOS x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
             platform: osx_amd64
-          
+
           # macOS ARM64
           - os: macos-latest
             target: aarch64-apple-darwin
             platform: osx_arm64
-          
+
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
